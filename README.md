@@ -1,4 +1,4 @@
-# Useful Setup: Windows QOL, Privacy, Performance & Ergonomics
+# Sane Windows: Windows QOL, Privacy, Performance & Ergonomics
 
 A modular, snapshot-backed setup script designed for any Windows 10/11 machine. Configure your desired system settings in a simple YAML file, run `setup.bat`, and your machine is configured in seconds.
 

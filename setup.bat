@@ -1,9 +1,9 @@
 @echo off
 setlocal
-title Useful Setup - Windows QOL ^& System Tweaks
+title Sane Windows - Windows QOL ^& System Tweaks
 
 echo ========================================================
-echo  Useful Setup: Windows QOL, Performance ^& Ergonomics
+echo  Sane Windows: Windows QOL, Performance ^& Ergonomics
 echo ========================================================
 echo.
 

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Useful Setup: Windows QOL, Privacy, Performance, and Developer Ergonomics.
+    Sane Windows: Windows QOL, Privacy, Performance, and Developer Ergonomics.
 
 .DESCRIPTION
     Applies configuration from config.yaml, takes snapshots before modifying anything,
@@ -40,7 +40,7 @@ $ErrorActionPreference = 'Stop'
 
 # --- OS Platform Guard ---
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
-    Write-Host "`n[ERROR] Useful Setup is designed exclusively for Windows environments." -ForegroundColor Red
+    Write-Host "`n[ERROR] Sane Windows is designed exclusively for Windows environments." -ForegroundColor Red
     Write-Host "Detected OS Platform: $([System.Environment]::OSVersion.Platform)" -ForegroundColor Yellow
     Write-Host "Execution aborted. Windows tweaks cannot be applied to Linux/macOS.`n" -ForegroundColor Yellow
     exit 1
@@ -417,8 +417,8 @@ function Export-CurrentConfiguration {
     $p1 = Join-Path $docs "WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
     $p2 = Join-Path $docs "PowerShell\Microsoft.PowerShell_profile.ps1"
     $psShortcuts = $false
-    if ((Test-Path -LiteralPath $p1) -and ((Get-Content -LiteralPath $p1 -Raw) -match "# >>> Useful Setup Developer Ergonomics >>>")) { $psShortcuts = $true }
-    if ((Test-Path -LiteralPath $p2) -and ((Get-Content -LiteralPath $p2 -Raw) -match "# >>> Useful Setup Developer Ergonomics >>>")) { $psShortcuts = $true }
+    if ((Test-Path -LiteralPath $p1) -and ((Get-Content -LiteralPath $p1 -Raw) -match "# >>> (Sane Windows|Useful Setup) Developer Ergonomics >>>")) { $psShortcuts = $true }
+    if ((Test-Path -LiteralPath $p2) -and ((Get-Content -LiteralPath $p2 -Raw) -match "# >>> (Sane Windows|Useful Setup) Developer Ergonomics >>>")) { $psShortcuts = $true }
 
     $wtSettings = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
     $termDup = $false
@@ -441,7 +441,7 @@ function Export-CurrentConfiguration {
 
     $yaml = @"
 # ==============================================================================
-# Useful Setup - Windows Quality-of-Life & Performance Configuration
+# Sane Windows - Windows Quality-of-Life & Performance Configuration
 # Exported from machine: $env:COMPUTERNAME on $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
 # ==============================================================================
 # Edit any setting below (true/false) and run 'setup.bat' or '.\setup.ps1'.
@@ -908,7 +908,7 @@ if ($Revert) {
 }
 
 # --- Main Setup Flow ---
-Write-Header "Useful Setup: Windows QOL & Machine Configuration"
+Write-Header "Sane Windows: Windows QOL & Machine Configuration"
 
 if (-not (Test-Path $ConfigPath)) {
     Write-Host "Configuration file not found: $ConfigPath" -ForegroundColor Red
@@ -1352,8 +1352,10 @@ if ($config['developer']['configure_git_autocrlf']) {
 
 # Developer Aliases and PSReadLine in PowerShell Profiles
 if ($config['developer']['enable_powershell_shortcuts']) {
-    $devAliasMarkerStart = "# >>> Useful Setup Developer Ergonomics >>>"
-    $devAliasMarkerEnd   = "# <<< Useful Setup Developer Ergonomics <<<"
+    $devAliasMarkerStart = "# >>> Sane Windows Developer Ergonomics >>>"
+    $devAliasMarkerEnd   = "# <<< Sane Windows Developer Ergonomics <<<"
+    $legacyMarkerStart   = "# >>> Useful Setup Developer Ergonomics >>>"
+    $legacyMarkerEnd     = "# <<< Useful Setup Developer Ergonomics <<<"
 
     $copyPasteHandlers = ""
     if ($config['developer']['require_ctrl_shift_copy_paste']) {
@@ -1368,7 +1370,7 @@ if ($config['developer']['enable_powershell_shortcuts']) {
     }
 
     $devAliasSnippet = @"
-# >>> Useful Setup Developer Ergonomics >>>
+# >>> Sane Windows Developer Ergonomics >>>
 # Shortcuts & Aliases
 if (-not (Get-Command which -ErrorAction SilentlyContinue)) {
     Set-Alias -Name which -Value Get-Command -Scope Global
@@ -1383,7 +1385,7 @@ if (Get-Module -ListAvailable -Name PSReadLine) {
         Set-PSReadLineOption -PredictionSource History -ErrorAction SilentlyContinue$copyPasteHandlers
     } catch { }
 }
-# <<< Useful Setup Developer Ergonomics <<<
+# <<< Sane Windows Developer Ergonomics <<<
 "@
 
     $docs = [Environment]::GetFolderPath('MyDocuments')
@@ -1405,12 +1407,17 @@ if (Get-Module -ListAvailable -Name PSReadLine) {
 
         if ($needsUpdate) {
             $profName = Split-Path $p -Leaf
-            Register-PlannedChange -Category "developer" -SettingName "powershell_shortcuts" -CurrentValue "<needs update>" -DesiredValue "Inject shortcuts into $profName" -AffectsExplorer $false -Arguments @($p, $devAliasSnippet, $devAliasMarkerStart, $devAliasMarkerEnd) -Action {
-                param($prof, $snip, $startMarker, $endMarker)
+            Register-PlannedChange -Category "developer" -SettingName "powershell_shortcuts" -CurrentValue "<needs update>" -DesiredValue "Inject shortcuts into $profName" -AffectsExplorer $false -Arguments @($p, $devAliasSnippet, $devAliasMarkerStart, $devAliasMarkerEnd, $legacyMarkerStart, $legacyMarkerEnd) -Action {
+                param($prof, $snip, $startMarker, $endMarker, $legStart, $legEnd)
                 $pDir = Split-Path -Parent $prof
                 if (-not (Test-Path $pDir)) { New-Item -ItemType Directory -Path $pDir -Force | Out-Null }
                 $existing = if (Test-Path $prof) { Get-Content $prof -Raw } else { "" }
                 if ($null -eq $existing) { $existing = "" }
+
+                if ($existing -match [regex]::Escape($legStart)) {
+                    $legPattern = "(?s)" + [regex]::Escape($legStart) + ".*?" + [regex]::Escape($legEnd)
+                    $existing = [regex]::Replace($existing, $legPattern, "")
+                }
 
                 if ($existing -match [regex]::Escape($startMarker)) {
                     $pattern = "(?s)" + [regex]::Escape($startMarker) + ".*?" + [regex]::Escape($endMarker)
