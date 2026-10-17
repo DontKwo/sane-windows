@@ -72,6 +72,7 @@ To view all saved snapshots:
 * **`disable_bing_search`**: Turns off Bing web search in the Start Menu (pure local app/file search).
 * **`disable_activity_history`**: Disables timeline feed and user activity syncing.
 * **`disable_feedback_prompts`**: Stops Windows feedback popup questionnaires.
+* **`disable_telemetry_tasks`**: Disables background telemetry and diagnostic scheduled tasks in Task Scheduler.
 
 ### 2. File Explorer & Navigation
 * **`show_file_extensions`**: Always shows file extensions (`.py`, `.exe`, `.json`, etc.).
@@ -82,11 +83,16 @@ To view all saved snapshots:
 * **`show_seconds_in_clock`**: Displays seconds in the taskbar system clock.
 * **`add_open_with_code`**: Adds "Open with Code" to right-click context menus for folders, empty folder background, files, and drives.
 * **`add_open_in_terminal`**: Adds "Open in Windows Terminal" to right-click context menus for folders, folder backgrounds, and drives.
+* **`enable_taskbar_end_task`**: Windows 11 (23H2+): Adds "End Task" directly to taskbar app icon right-click menus to kill frozen apps immediately.
+* **`disable_search_highlights`**: Removes Bing web search doodles, trending topics, and cartoons from the taskbar search box.
+* **`disable_store_app_prompt`**: Prevents the "Look for an app in the Microsoft Store" popup when opening unknown file types (goes straight to local Open With).
+* **`disable_lock_screen_ads`**: Turns off lock screen rotating spotlights, trivia overlays, tips, and promotional ads.
 
 ### 3. Startup Speed & System Performance
 * **`disable_startup_delay`**: Removes the artificial Windows startup delay for desktop apps.
 * **`disable_edge_background_tasks`**: Stops Microsoft Edge from pre-launching and idling in the background.
 * **`disable_fast_startup`**: Disables Fast Startup (avoids hibernation kernel corruption across reboots).
+* **`unlock_ultimate_performance`**: Unlocks the hidden Windows "Ultimate Performance" power plan to minimize hardware micro-stutters and latency.
 
 ### 4. UI Cleanliness & De-bloat
 * **`hide_taskbar_copilot_button`**: Hides the Copilot button from the taskbar.
@@ -101,6 +107,7 @@ To view all saved snapshots:
 * **`configure_git_autocrlf`**: Configures `git config --global core.autocrlf true`.
 * **`enable_powershell_shortcuts`**: Adds aliases (`which`, `ll`) and `PSReadLine` history prediction autocompletion to PowerShell profiles.
 * **`enable_terminal_duplicate_tab`**: Configures Windows Terminal and PowerShell prompt integration (OSC 9;9) so **`Ctrl + Shift + D`** (or right-click $\rightarrow$ Duplicate Tab) opens a new tab in the **exact same directory**.
+* **`require_ctrl_shift_copy_paste`**: Configures Windows Terminal and PowerShell (`PSReadLine`) so you must use **`Ctrl + Shift + C`** and **`Ctrl + Shift + V`** to copy/paste, freeing plain `Ctrl + C` strictly for interrupt (`SIGINT`) and eliminating accidental pastes.
 
 ### 6. Windows Update Control
 * **`no_auto_restart_logged_on`**: Prevents Windows from automatically restarting for updates while an active user is logged in.

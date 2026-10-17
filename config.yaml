@@ -25,6 +25,10 @@ privacy:
   # Disables feedback popups ("How likely are you to recommend Windows...")
   disable_feedback_prompts: true
 
+  # Disables background telemetry and customer experience scheduled tasks
+  disable_telemetry_tasks: true
+
+
 
 # ------------------------------------------------------------------------------
 # 2. File Explorer & Navigation Sanity
@@ -54,6 +58,18 @@ explorer:
   # Adds "Open in Windows Terminal" to right-click context menu for folders and backgrounds
   add_open_in_terminal: true
 
+  # Windows 11 (23H2+): Enables "End Task" on taskbar app right-click menu
+  enable_taskbar_end_task: true
+
+  # Disables web search highlights, cartoons, and doodles inside the taskbar search box
+  disable_search_highlights: true
+
+  # Prevents "Search the Microsoft Store for an app" popup when opening unknown file types
+  disable_store_app_prompt: true
+
+  # Disables lock screen rotating spotlights, ads, fun facts, and tips
+  disable_lock_screen_ads: true
+
 
 # ------------------------------------------------------------------------------
 # 3. Startup Speed & System Performance
@@ -67,6 +83,10 @@ performance:
 
   # Disables Fast Startup (prevents hibernation-related kernel state corruption)
   disable_fast_startup: true
+
+  # Unlocks the hidden Windows "Ultimate Performance" power scheme
+  unlock_ultimate_performance: true
+
 
 
 # ------------------------------------------------------------------------------
@@ -122,6 +142,10 @@ developer:
 
   # Binds Ctrl+Shift+D in Terminal and installs OSC 9;9 CWD tracker
   enable_terminal_duplicate_tab: true
+
+  # Requires Ctrl+Shift+C to copy and Ctrl+Shift+V to paste in Terminal & PowerShell
+  require_ctrl_shift_copy_paste: true
+
 
 
 # ------------------------------------------------------------------------------

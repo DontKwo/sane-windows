@@ -259,6 +259,79 @@ function Find-WindowsTerminalPath {
     return "wt.exe"
 }
 
+function Test-UltimatePerformanceUnlocked {
+    try {
+        $schemes = Get-ChildItem "HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes" -ErrorAction SilentlyContinue
+        foreach ($s in $schemes) {
+            $fn = (Get-ItemProperty $s.PSPath -Name "FriendlyName" -ErrorAction SilentlyContinue).FriendlyName
+            if ($fn -like "*Ultimate Performance*" -or $s.PSChildName -eq "e9a42b02-d5df-448d-aa00-03f14749eb61") {
+                return $true
+            }
+        }
+    } catch { }
+    return $false
+}
+
+function Get-TerminalCopyPasteConfigured {
+    $wtPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
+    if (-not (Test-Path -LiteralPath $wtPath)) { return $false }
+    try {
+        $wt = Get-Content -LiteralPath $wtPath -Raw | ConvertFrom-Json
+        $copyShift = $wt.keybindings | Where-Object { ($_.id -like "*copy*" -or $_.command -eq "copy" -or ($_.command.action -eq "copy")) -and $_.keys -eq "ctrl+shift+c" }
+        $pasteShift = $wt.keybindings | Where-Object { ($_.id -like "*paste*" -or $_.command -eq "paste") -and $_.keys -eq "ctrl+shift+v" }
+        $cUnbound = $wt.keybindings | Where-Object { $_.keys -eq "ctrl+c" -and ($_.action -eq "unbound" -or $_.command -eq "unbound" -or [string]::IsNullOrEmpty($_.id)) }
+        $vUnbound = $wt.keybindings | Where-Object { $_.keys -eq "ctrl+v" -and ($_.action -eq "unbound" -or $_.command -eq "unbound" -or [string]::IsNullOrEmpty($_.id)) }
+        return ($null -ne $copyShift -and $null -ne $pasteShift -and $null -ne $cUnbound -and $null -ne $vUnbound)
+    } catch { return $false }
+}
+
+function Set-TerminalCopyPasteKeybindings {
+    param([bool]$Enable)
+    $wtPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
+    if (-not (Test-Path -LiteralPath $wtPath)) { return }
+    try {
+        $wt = Get-Content -LiteralPath $wtPath -Raw | ConvertFrom-Json
+        $kbs = [System.Collections.ArrayList]@()
+        if ($wt.keybindings) {
+            foreach ($kb in $wt.keybindings) {
+                if ($kb.keys -in @("ctrl+c", "ctrl+v", "ctrl+shift+c", "ctrl+shift+v")) {
+                    continue
+                }
+                $null = $kbs.Add($kb)
+            }
+        }
+        if ($Enable) {
+            $copyAction = $wt.actions | Where-Object { $_.command -eq "copy" -or ($_.command.action -eq "copy") }
+            $copyId = if ($copyAction) { $copyAction.id } else { $null }
+
+            $pasteAction = $wt.actions | Where-Object { $_.command -eq "paste" }
+            $pasteId = if ($pasteAction) { $pasteAction.id } else { $null }
+
+            $copyBinding = if ($copyId) { [PSCustomObject]@{ id = $copyId; keys = "ctrl+shift+c" } } else { [PSCustomObject]@{ command = [PSCustomObject]@{ action = "copy"; singleLine = $false }; keys = "ctrl+shift+c" } }
+            $pasteBinding = if ($pasteId) { [PSCustomObject]@{ id = $pasteId; keys = "ctrl+shift+v" } } else { [PSCustomObject]@{ command = "paste"; keys = "ctrl+shift+v" } }
+
+            $null = $kbs.Add($copyBinding)
+            $null = $kbs.Add($pasteBinding)
+            $null = $kbs.Add([PSCustomObject]@{ command = "unbound"; keys = "ctrl+v" })
+            $null = $kbs.Add([PSCustomObject]@{ command = "unbound"; keys = "ctrl+c" })
+        } else {
+            $copyAction = $wt.actions | Where-Object { $_.command -eq "copy" -or ($_.command.action -eq "copy") }
+            if ($copyAction) {
+                $null = $kbs.Add([PSCustomObject]@{ id = $copyAction.id; keys = "ctrl+c" })
+            }
+            $pasteAction = $wt.actions | Where-Object { $_.command -eq "paste" }
+            if ($pasteAction) {
+                $null = $kbs.Add([PSCustomObject]@{ id = $pasteAction.id; keys = "ctrl+v" })
+            }
+        }
+        $wt.keybindings = $kbs
+        $json = $wt | ConvertTo-Json -Depth 20
+        [System.IO.File]::WriteAllText($wtPath, $json, [System.Text.Encoding]::UTF8)
+    } catch {
+        Write-Warn "Failed to update Windows Terminal settings.json: $_"
+    }
+}
+
 # --- Config Exporter ---
 function Export-CurrentConfiguration {
     param([string]$OutputPath)
@@ -281,6 +354,13 @@ function Export-CurrentConfiguration {
     $siuf = Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Siuf\Rules" -ValName "NumberOfSIUFInPeriod"
     $isFeedbackDisabled = ($siuf -eq 0)
 
+    # Telemetry scheduled tasks
+    $appraiserTask = Get-ScheduledTask -TaskPath "\Microsoft\Windows\Application Experience\" -TaskName "Microsoft Compatibility Appraiser" -ErrorAction SilentlyContinue
+    if (-not $appraiserTask) {
+        $appraiserTask = Get-ScheduledTask -TaskPath "\Microsoft\Windows\Application Experience\" -TaskName "Microsoft Compatibility Appraiser Exp" -ErrorAction SilentlyContinue
+    }
+    $isTelemetryTasksDisabled = if ($appraiserTask) { $appraiserTask.State -eq "Disabled" } else { $false }
+
     # Explorer
     $showExt = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "HideFileExt") -eq 0)
     $showHidden = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "Hidden") -eq 1)
@@ -291,11 +371,19 @@ function Export-CurrentConfiguration {
     $hasVsCodeMenu = (Test-Path -LiteralPath "HKCU:\Software\Classes\Directory\Background\shell\VSCode")
     $hasTerminalMenu = (Test-Path -LiteralPath "HKCU:\Software\Classes\Directory\Background\shell\wt")
 
+    $isTaskbarEndTask = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings" -ValName "TaskbarEndTask") -eq 1)
+    $isSearchHighlightsDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" -ValName "IsDynamicSearchBoxEnabled") -eq 0)
+    $isStorePromptDisabled = ((Get-RegValSafe -KeyPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" -ValName "NoUseStoreOpenWith") -eq 1)
+    $isLockOverlayDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -ValName "RotatingLockScreenOverlayEnabled") -eq 0)
+    $isLockSubDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -ValName "SubscribedContent-338387Enabled") -eq 0)
+    $isLockScreenAdsDisabled = ($isLockOverlayDisabled -and $isLockSubDisabled)
+
     # Performance
     $disableDelay = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Serialize" -ValName "StartupDelayInMSec") -eq 0)
     $edge1 = Get-RegValSafe -KeyPath "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -ValName "StartupBoostEnabled"
     $disableEdge = ($edge1 -eq 0)
     $disableFastStart = ((Get-RegValSafe -KeyPath "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" -ValName "HiberbootEnabled") -eq 0)
+    $isUltimateUnlocked = (Test-UltimatePerformanceUnlocked)
 
     # UI Debloat
     $hideCopilot = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "ShowCopilotButton") -eq 0)
@@ -324,6 +412,7 @@ function Export-CurrentConfiguration {
         $rawWt = Get-Content -LiteralPath $wtSettings -Raw
         if ($rawWt -match "duplicateTab") { $termDup = $true }
     }
+    $isCtrlShiftCopyPaste = (Get-TerminalCopyPasteConfigured)
 
     # Windows Update
     $noAutoReboot = ((Get-RegValSafe -KeyPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -ValName "NoAutoRebootWithLoggedOnUsers") -eq 1)
@@ -365,6 +454,9 @@ privacy:
   # Disables feedback popups ("How likely are you to recommend Windows...")
   disable_feedback_prompts: $(To-YBool $isFeedbackDisabled)
 
+  # Disables background telemetry and customer experience scheduled tasks
+  disable_telemetry_tasks: $(To-YBool $isTelemetryTasksDisabled)
+
 
 # ------------------------------------------------------------------------------
 # 2. File Explorer & Navigation Sanity
@@ -394,6 +486,18 @@ explorer:
   # Adds "Open in Windows Terminal" to right-click context menu for folders and backgrounds
   add_open_in_terminal: $(To-YBool $hasTerminalMenu)
 
+  # Windows 11 (23H2+): Enables "End Task" on taskbar app right-click menu
+  enable_taskbar_end_task: $(To-YBool $isTaskbarEndTask)
+
+  # Disables web search highlights, cartoons, and doodles inside the taskbar search box
+  disable_search_highlights: $(To-YBool $isSearchHighlightsDisabled)
+
+  # Prevents "Search the Microsoft Store for an app" popup when opening unknown file types
+  disable_store_app_prompt: $(To-YBool $isStorePromptDisabled)
+
+  # Disables lock screen rotating spotlights, ads, fun facts, and tips
+  disable_lock_screen_ads: $(To-YBool $isLockScreenAdsDisabled)
+
 
 # ------------------------------------------------------------------------------
 # 3. Startup Speed & System Performance
@@ -407,6 +511,9 @@ performance:
 
   # Disables Fast Startup (prevents hibernation-related kernel state corruption)
   disable_fast_startup: $(To-YBool $disableFastStart)
+
+  # Unlocks the hidden Windows "Ultimate Performance" power scheme
+  unlock_ultimate_performance: $(To-YBool $isUltimateUnlocked)
 
 
 # ------------------------------------------------------------------------------
@@ -463,6 +570,9 @@ developer:
   # Binds Ctrl+Shift+D in Terminal and installs OSC 9;9 CWD tracker
   enable_terminal_duplicate_tab: $(To-YBool $termDup)
 
+  # Requires Ctrl+Shift+C to copy and Ctrl+Shift+V to paste in Terminal & PowerShell
+  require_ctrl_shift_copy_paste: $(To-YBool $isCtrlShiftCopyPaste)
+
 
 # ------------------------------------------------------------------------------
 # 6. Windows Update Control
@@ -481,6 +591,7 @@ windows_update:
     Write-Host " To use this as your active configuration, run:" -ForegroundColor Gray
     Write-Host "      Copy-Item `"$OutputPath`" `"$ScriptDir\config.yaml`"`n" -ForegroundColor Yellow
 }
+
 
 
 # --- Snapshot Engine ---
@@ -540,6 +651,11 @@ function Get-CurrentSystemState {
 
         # Explorer Additions
         @{ Section="explorer"; Key="clock_seconds"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="ShowSecondsInSystemClock"; Type="DWord" },
+        @{ Section="explorer"; Key="taskbar_end_task"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings"; Name="TaskbarEndTask"; Type="DWord" },
+        @{ Section="explorer"; Key="search_highlights"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings"; Name="IsDynamicSearchBoxEnabled"; Type="DWord" },
+        @{ Section="explorer"; Key="store_app_prompt"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer"; Name="NoUseStoreOpenWith"; Type="DWord" },
+        @{ Section="explorer"; Key="lock_screen_overlay"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name="RotatingLockScreenOverlayEnabled"; Type="DWord" },
+        @{ Section="explorer"; Key="lock_screen_sub"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name="SubscribedContent-338387Enabled"; Type="DWord" },
 
         # UI Debloat Additions (Accessibility Hotkeys)
         @{ Section="ui_debloat"; Key="sticky_keys"; Path="HKCU:\Control Panel\Accessibility\StickyKeys"; Name="Flags"; Type="String" },
@@ -592,13 +708,19 @@ function Get-CurrentSystemState {
         } catch { }
     }
 
-    # Terminal Duplicate Tab Status
+    # Terminal Settings
     $wtPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
     if (Test-Path -LiteralPath $wtPath) {
         try {
             $wtRaw = Get-Content -LiteralPath $wtPath -Raw
             $state.terminal["duplicateTabBound"] = ($wtRaw -match "duplicateTab")
+            $state.terminal["ctrlShiftCopyPaste"] = (Get-TerminalCopyPasteConfigured)
         } catch { }
+    }
+
+    # Power State
+    $state.power = @{
+        ultimatePerformanceUnlocked = (Test-UltimatePerformanceUnlocked)
     }
 
     return $state
@@ -741,6 +863,13 @@ if ($Revert) {
         }
     }
 
+    # Revert Terminal Copy/Paste Keybindings
+    if ($snapData.terminal -and $snapData.terminal.ctrlShiftCopyPaste -eq $false) {
+        Set-TerminalCopyPasteKeybindings -Enable $false
+        Write-Changed "Windows Terminal" "ctrlShiftCopyPaste" "Modified" "Restored to defaults"
+        $revertedCount++
+    }
+
     # Revert PowerShell profiles
     & "$ScriptDir\setup_duplicate_tab.ps1" -Uninstall | Out-Null
     Write-Info "PowerShell profile duplicate tab hooks reverted."
@@ -867,6 +996,42 @@ if ($null -ne $config['privacy']['disable_feedback_prompts']) {
     Check-RegChange -Category "privacy" -SettingName "feedback_notifications" -RegPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -ValName "DoNotShowFeedbackNotifications" -DesiredValue $fbNotif
 }
 
+if ($config['privacy']['disable_telemetry_tasks']) {
+    if (-not $isAdmin) {
+        if ($VerboseOutput) {
+            Write-Skipped "privacy.disable_telemetry_tasks" "Requires Administrator elevation"
+        }
+    } else {
+        $tasksToDisable = @(
+            @{ Path="\Microsoft\Windows\Application Experience\"; Name="Microsoft Compatibility Appraiser" },
+            @{ Path="\Microsoft\Windows\Application Experience\"; Name="Microsoft Compatibility Appraiser Exp" },
+            @{ Path="\Microsoft\Windows\Application Experience\"; Name="ProgramDataUpdater" },
+            @{ Path="\Microsoft\Windows\Customer Experience Improvement Program\"; Name="Consolidator" },
+            @{ Path="\Microsoft\Windows\Customer Experience Improvement Program\"; Name="UsbCeip" },
+            @{ Path="\Microsoft\Windows\DiskDiagnostic\"; Name="Microsoft-Windows-DiskDiagnosticDataCollector" }
+        )
+        $activeTasks = @()
+        foreach ($t in $tasksToDisable) {
+            $taskObj = Get-ScheduledTask -TaskPath $t.Path -TaskName $t.Name -ErrorAction SilentlyContinue
+            if ($taskObj -and $taskObj.State -ne "Disabled") {
+                $activeTasks += $t
+            }
+        }
+        if ($activeTasks.Count -gt 0) {
+            Register-PlannedChange -Category "privacy" -SettingName "disable_telemetry_tasks" -CurrentValue "$($activeTasks.Count) tasks active" -DesiredValue "Disable $($activeTasks.Count) tasks" -AffectsExplorer $false -Action {
+                foreach ($at in $tasksToDisable) {
+                    $to = Get-ScheduledTask -TaskPath $at.Path -TaskName $at.Name -ErrorAction SilentlyContinue
+                    if ($to -and $to.State -ne "Disabled") {
+                        Disable-ScheduledTask -TaskPath $at.Path -TaskName $at.Name -ErrorAction SilentlyContinue | Out-Null
+                    }
+                }
+            }
+        } else {
+            Write-Unchanged "privacy.disable_telemetry_tasks" "Disabled"
+        }
+    }
+}
+
 # -------------------------------------------------------------
 # 2. Explorer & Navigation Sanity
 # -------------------------------------------------------------
@@ -980,6 +1145,27 @@ if ($null -ne $config['explorer']['add_open_in_terminal']) {
     }
 }
 
+if ($null -ne $config['explorer']['enable_taskbar_end_task']) {
+    $endTaskVal = if ($config['explorer']['enable_taskbar_end_task']) { 1 } else { 0 }
+    Check-RegChange -Category "explorer" -SettingName "enable_taskbar_end_task" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings" -ValName "TaskbarEndTask" -DesiredValue $endTaskVal
+}
+
+if ($null -ne $config['explorer']['disable_search_highlights']) {
+    $searchHighVal = if ($config['explorer']['disable_search_highlights']) { 0 } else { 1 }
+    Check-RegChange -Category "explorer" -SettingName "disable_search_highlights" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" -ValName "IsDynamicSearchBoxEnabled" -DesiredValue $searchHighVal
+}
+
+if ($null -ne $config['explorer']['disable_store_app_prompt']) {
+    $storePromptVal = if ($config['explorer']['disable_store_app_prompt']) { 1 } else { 0 }
+    Check-RegChange -Category "explorer" -SettingName "disable_store_app_prompt" -RegPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" -ValName "NoUseStoreOpenWith" -DesiredValue $storePromptVal
+}
+
+if ($null -ne $config['explorer']['disable_lock_screen_ads']) {
+    $lockAdVal = if ($config['explorer']['disable_lock_screen_ads']) { 0 } else { 1 }
+    Check-RegChange -Category "explorer" -SettingName "lock_screen_overlay" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -ValName "RotatingLockScreenOverlayEnabled" -DesiredValue $lockAdVal
+    Check-RegChange -Category "explorer" -SettingName "lock_screen_sub_content_338387" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -ValName "SubscribedContent-338387Enabled" -DesiredValue $lockAdVal
+}
+
 
 # -------------------------------------------------------------
 # 3. Startup Speed & Performance
@@ -1000,6 +1186,17 @@ if ($null -ne $config['performance']['disable_edge_background_tasks']) {
 if ($null -ne $config['performance']['disable_fast_startup']) {
     $fastStartVal = if ($config['performance']['disable_fast_startup']) { 0 } else { 1 }
     Check-RegChange -Category "performance" -SettingName "disable_fast_startup" -RegPath "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" -ValName "HiberbootEnabled" -DesiredValue $fastStartVal
+}
+
+if ($config['performance']['unlock_ultimate_performance']) {
+    $isUnlocked = Test-UltimatePerformanceUnlocked
+    if (-not $isUnlocked) {
+        Register-PlannedChange -Category "performance" -SettingName "unlock_ultimate_performance" -CurrentValue "Hidden" -DesiredValue "Unlocked" -AffectsExplorer $false -Action {
+            powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 | Out-Null
+        }
+    } else {
+        Write-Unchanged "performance.unlock_ultimate_performance" "Unlocked"
+    }
 }
 
 # -------------------------------------------------------------
@@ -1106,24 +1303,36 @@ if ($config['developer']['enable_powershell_shortcuts']) {
     $devAliasMarkerStart = "# >>> Useful Setup Developer Ergonomics >>>"
     $devAliasMarkerEnd   = "# <<< Useful Setup Developer Ergonomics <<<"
 
-    $devAliasSnippet = @'
+    $copyPasteHandlers = ""
+    if ($config['developer']['require_ctrl_shift_copy_paste']) {
+        $copyPasteHandlers = @"
+
+        # Require Ctrl+Shift+C and Ctrl+Shift+V for Copy & Paste
+        Set-PSReadLineKeyHandler -Chord 'Ctrl+Shift+c', 'Ctrl+Shift+C' -Function Copy -ErrorAction SilentlyContinue
+        Set-PSReadLineKeyHandler -Chord 'Ctrl+Shift+v', 'Ctrl+Shift+V' -Function Paste -ErrorAction SilentlyContinue
+        Set-PSReadLineKeyHandler -Chord 'Ctrl+v' -ScriptBlock { } -ErrorAction SilentlyContinue
+        Set-PSReadLineKeyHandler -Chord 'Ctrl+c' -Function CancelLine -ErrorAction SilentlyContinue
+"@
+    }
+
+    $devAliasSnippet = @"
 # >>> Useful Setup Developer Ergonomics >>>
 # Shortcuts & Aliases
 if (-not (Get-Command which -ErrorAction SilentlyContinue)) {
     Set-Alias -Name which -Value Get-Command -Scope Global
 }
 if (-not (Get-Command ll -ErrorAction SilentlyContinue)) {
-    function global:ll { Get-ChildItem -Path $args }
+    function global:ll { Get-ChildItem -Path `$args }
 }
 
-# PSReadLine history prediction autocomplete
+# PSReadLine history prediction autocomplete & keybindings
 if (Get-Module -ListAvailable -Name PSReadLine) {
     try {
-        Set-PSReadLineOption -PredictionSource History -ErrorAction SilentlyContinue
+        Set-PSReadLineOption -PredictionSource History -ErrorAction SilentlyContinue$copyPasteHandlers
     } catch { }
 }
 # <<< Useful Setup Developer Ergonomics <<<
-'@
+"@
 
     $docs = [Environment]::GetFolderPath('MyDocuments')
     $psProfiles = @(
@@ -1135,16 +1344,30 @@ if (Get-Module -ListAvailable -Name PSReadLine) {
         $pContent = if (Test-Path $p) { Get-Content $p -Raw } else { "" }
         if ($null -eq $pContent) { $pContent = "" }
 
+        $needsUpdate = $false
         if ($pContent -notmatch [regex]::Escape($devAliasMarkerStart)) {
+            $needsUpdate = $true
+        } elseif ($config['developer']['require_ctrl_shift_copy_paste'] -and ($pContent -notmatch "Set-PSReadLineKeyHandler -Chord 'Ctrl\+Shift\+c'")) {
+            $needsUpdate = $true
+        }
+
+        if ($needsUpdate) {
             $profName = Split-Path $p -Leaf
-            Register-PlannedChange -Category "developer" -SettingName "powershell_shortcuts" -CurrentValue "<none>" -DesiredValue "Inject aliases into $profName" -AffectsExplorer $false -Arguments @($p, $devAliasSnippet) -Action {
-                param($prof, $snip)
+            Register-PlannedChange -Category "developer" -SettingName "powershell_shortcuts" -CurrentValue "<needs update>" -DesiredValue "Inject shortcuts into $profName" -AffectsExplorer $false -Arguments @($p, $devAliasSnippet, $devAliasMarkerStart, $devAliasMarkerEnd) -Action {
+                param($prof, $snip, $startMarker, $endMarker)
                 $pDir = Split-Path -Parent $prof
                 if (-not (Test-Path $pDir)) { New-Item -ItemType Directory -Path $pDir -Force | Out-Null }
                 $existing = if (Test-Path $prof) { Get-Content $prof -Raw } else { "" }
                 if ($null -eq $existing) { $existing = "" }
-                $newP = if ($existing.Trim().Length -gt 0) { $existing.TrimEnd() + "`r`n`r`n" + $snip + "`r`n" } else { $snip + "`r`n" }
-                Set-Content -Path $prof -Value $newP -NoNewline
+
+                if ($existing -match [regex]::Escape($startMarker)) {
+                    $pattern = "(?s)" + [regex]::Escape($startMarker) + ".*?" + [regex]::Escape($endMarker)
+                    $newContent = [regex]::Replace($existing, $pattern, $snip)
+                    Set-Content -Path $prof -Value $newContent -NoNewline
+                } else {
+                    $newP = if ($existing.Trim().Length -gt 0) { $existing.TrimEnd() + "`r`n`r`n" + $snip + "`r`n" } else { $snip + "`r`n" }
+                    Set-Content -Path $prof -Value $newP -NoNewline
+                }
             }
         } else {
             Write-Unchanged "developer.powershell_shortcuts" "$p (already active)"
@@ -1167,6 +1390,28 @@ if ($config['developer']['enable_terminal_duplicate_tab']) {
         }
     } else {
         Write-Unchanged "developer.terminal_duplicate_tab" "Ctrl+Shift+D in same CWD"
+    }
+}
+
+# Terminal Copy/Paste (Require Ctrl+Shift+C and Ctrl+Shift+V)
+if ($null -ne $config['developer']['require_ctrl_shift_copy_paste']) {
+    $isWtConfigured = Get-TerminalCopyPasteConfigured
+    if ($config['developer']['require_ctrl_shift_copy_paste']) {
+        if (-not $isWtConfigured) {
+            Register-PlannedChange -Category "developer" -SettingName "terminal_ctrl_shift_copy_paste" -CurrentValue "Default (Ctrl+C/V)" -DesiredValue "Require Ctrl+Shift+C/V" -AffectsExplorer $false -Action {
+                Set-TerminalCopyPasteKeybindings -Enable $true
+            }
+        } else {
+            Write-Unchanged "developer.terminal_ctrl_shift_copy_paste" "Require Ctrl+Shift+C/V"
+        }
+    } else {
+        if ($isWtConfigured) {
+            Register-PlannedChange -Category "developer" -SettingName "terminal_ctrl_shift_copy_paste" -CurrentValue "Require Ctrl+Shift+C/V" -DesiredValue "Default (Ctrl+C/V)" -AffectsExplorer $false -Action {
+                Set-TerminalCopyPasteKeybindings -Enable $false
+            }
+        } else {
+            Write-Unchanged "developer.terminal_ctrl_shift_copy_paste" "Default (Ctrl+C/V)"
+        }
     }
 }
 
