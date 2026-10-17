@@ -38,6 +38,19 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# --- OS Platform Guard ---
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
+    Write-Host "`n[ERROR] Useful Setup is designed exclusively for Windows environments." -ForegroundColor Red
+    Write-Host "Detected OS Platform: $([System.Environment]::OSVersion.Platform)" -ForegroundColor Yellow
+    Write-Host "Execution aborted. Windows tweaks cannot be applied to Linux/macOS.`n" -ForegroundColor Yellow
+    exit 1
+}
+
+# --- Windows Version Detection ---
+$script:WinBuild = [System.Environment]::OSVersion.Version.Build
+$script:IsWindows11 = ($script:WinBuild -ge 22000)
+$script:IsWindows11_23H2 = ($script:WinBuild -ge 22631)
+
 $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Definition }
 if (-not $ScriptDir) { $ScriptDir = (Get-Location).Path }
 if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
@@ -375,8 +388,9 @@ function Export-CurrentConfiguration {
     $isSearchHighlightsDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" -ValName "IsDynamicSearchBoxEnabled") -eq 0)
     $isStorePromptDisabled = ((Get-RegValSafe -KeyPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" -ValName "NoUseStoreOpenWith") -eq 1)
     $isLockOverlayDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -ValName "RotatingLockScreenOverlayEnabled") -eq 0)
-    $isLockSubDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -ValName "SubscribedContent-338387Enabled") -eq 0)
     $isLockScreenAdsDisabled = ($isLockOverlayDisabled -and $isLockSubDisabled)
+    $isSnapAssistDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "SnapAssist") -eq 0)
+    $isMouseStickyCornersDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Control Panel\Desktop" -ValName "MouseCornerClipLength") -eq 0)
 
     # Performance
     $disableDelay = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Serialize" -ValName "StartupDelayInMSec") -eq 0)
@@ -497,6 +511,12 @@ explorer:
 
   # Disables lock screen rotating spotlights, ads, fun facts, and tips
   disable_lock_screen_ads: $(To-YBool $isLockScreenAdsDisabled)
+
+  # Disables Snap Assist popups (multi-window thumbnail suggestions & flyouts when snapping)
+  disable_snap_assist_popups: $(To-YBool $isSnapAssistDisabled)
+
+  # Disables multi-monitor cursor sticky corners (allows smooth mouse transitions between displays)
+  disable_mouse_sticky_corners: $(To-YBool $isMouseStickyCornersDisabled)
 
 
 # ------------------------------------------------------------------------------
@@ -656,6 +676,10 @@ function Get-CurrentSystemState {
         @{ Section="explorer"; Key="store_app_prompt"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer"; Name="NoUseStoreOpenWith"; Type="DWord" },
         @{ Section="explorer"; Key="lock_screen_overlay"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name="RotatingLockScreenOverlayEnabled"; Type="DWord" },
         @{ Section="explorer"; Key="lock_screen_sub"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name="SubscribedContent-338387Enabled"; Type="DWord" },
+        @{ Section="explorer"; Key="snap_assist"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="SnapAssist"; Type="DWord" },
+        @{ Section="explorer"; Key="snap_assist_flyout"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="EnableSnapAssistFlyout"; Type="DWord" },
+        @{ Section="explorer"; Key="snap_bar"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="EnableSnapBar"; Type="DWord" },
+        @{ Section="explorer"; Key="mouse_corner_clip_length"; Path="HKCU:\Control Panel\Desktop"; Name="MouseCornerClipLength"; Type="DWord" },
 
         # UI Debloat Additions (Accessibility Hotkeys)
         @{ Section="ui_debloat"; Key="sticky_keys"; Path="HKCU:\Control Panel\Accessibility\StickyKeys"; Name="Flags"; Type="String" },
@@ -1058,26 +1082,30 @@ if ($null -ne $config['explorer']['show_full_path_in_title']) {
 }
 
 if ($null -ne $config['explorer']['classic_context_menu']) {
-    $clsidKey = "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}"
-    $isClassic = (Test-Path "$clsidKey\InprocServer32")
-    if ($config['explorer']['classic_context_menu']) {
-        if (-not $isClassic) {
-            Register-PlannedChange -Category "explorer" -SettingName "classic_context_menu" -CurrentValue "Windows 11 Modern" -DesiredValue "Windows 10 Classic Style" -AffectsExplorer $true -Arguments @($clsidKey) -Action {
-                param($k)
-                New-Item -Path "$k\InprocServer32" -Force | Out-Null
-                Set-Item -Path "$k\InprocServer32" -Value "" | Out-Null
-            }
-        } else {
-            Write-Unchanged "explorer.classic_context_menu" "Enabled (Windows 10 Style)"
-        }
+    if (-not $script:IsWindows11) {
+        Write-Skipped "explorer.classic_context_menu" "Native to Windows 10 (Windows 11 only)"
     } else {
-        if ($isClassic) {
-            Register-PlannedChange -Category "explorer" -SettingName "classic_context_menu" -CurrentValue "Windows 10 Classic Style" -DesiredValue "Windows 11 Modern" -AffectsExplorer $true -Arguments @($clsidKey) -Action {
-                param($k)
-                Remove-Item -Path $k -Recurse -Force -ErrorAction SilentlyContinue
+        $clsidKey = "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}"
+        $isClassic = (Test-Path "$clsidKey\InprocServer32")
+        if ($config['explorer']['classic_context_menu']) {
+            if (-not $isClassic) {
+                Register-PlannedChange -Category "explorer" -SettingName "classic_context_menu" -CurrentValue "Windows 11 Modern" -DesiredValue "Windows 10 Classic Style" -AffectsExplorer $true -Arguments @($clsidKey) -Action {
+                    param($k)
+                    New-Item -Path "$k\InprocServer32" -Force | Out-Null
+                    Set-Item -Path "$k\InprocServer32" -Value "" | Out-Null
+                }
+            } else {
+                Write-Unchanged "explorer.classic_context_menu" "Enabled (Windows 10 Style)"
             }
         } else {
-            Write-Unchanged "explorer.classic_context_menu" "Windows 11 Modern"
+            if ($isClassic) {
+                Register-PlannedChange -Category "explorer" -SettingName "classic_context_menu" -CurrentValue "Windows 10 Classic Style" -DesiredValue "Windows 11 Modern" -AffectsExplorer $true -Arguments @($clsidKey) -Action {
+                    param($k)
+                    Remove-Item -Path $k -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            } else {
+                Write-Unchanged "explorer.classic_context_menu" "Windows 11 Modern"
+            }
         }
     }
 }
@@ -1146,8 +1174,12 @@ if ($null -ne $config['explorer']['add_open_in_terminal']) {
 }
 
 if ($null -ne $config['explorer']['enable_taskbar_end_task']) {
-    $endTaskVal = if ($config['explorer']['enable_taskbar_end_task']) { 1 } else { 0 }
-    Check-RegChange -Category "explorer" -SettingName "enable_taskbar_end_task" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings" -ValName "TaskbarEndTask" -DesiredValue $endTaskVal
+    if (-not $script:IsWindows11_23H2) {
+        Write-Skipped "explorer.enable_taskbar_end_task" "Requires Windows 11 23H2 (Build 22631+) or newer"
+    } else {
+        $endTaskVal = if ($config['explorer']['enable_taskbar_end_task']) { 1 } else { 0 }
+        Check-RegChange -Category "explorer" -SettingName "enable_taskbar_end_task" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings" -ValName "TaskbarEndTask" -DesiredValue $endTaskVal
+    }
 }
 
 if ($null -ne $config['explorer']['disable_search_highlights']) {
@@ -1164,6 +1196,18 @@ if ($null -ne $config['explorer']['disable_lock_screen_ads']) {
     $lockAdVal = if ($config['explorer']['disable_lock_screen_ads']) { 0 } else { 1 }
     Check-RegChange -Category "explorer" -SettingName "lock_screen_overlay" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -ValName "RotatingLockScreenOverlayEnabled" -DesiredValue $lockAdVal
     Check-RegChange -Category "explorer" -SettingName "lock_screen_sub_content_338387" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -ValName "SubscribedContent-338387Enabled" -DesiredValue $lockAdVal
+}
+
+if ($null -ne $config['explorer']['disable_snap_assist_popups']) {
+    $snapVal = if ($config['explorer']['disable_snap_assist_popups']) { 0 } else { 1 }
+    Check-RegChange -Category "explorer" -SettingName "snap_assist" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "SnapAssist" -DesiredValue $snapVal
+    Check-RegChange -Category "explorer" -SettingName "snap_assist_flyout" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "EnableSnapAssistFlyout" -DesiredValue $snapVal
+    Check-RegChange -Category "explorer" -SettingName "snap_bar" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "EnableSnapBar" -DesiredValue $snapVal
+}
+
+if ($null -ne $config['explorer']['disable_mouse_sticky_corners']) {
+    $cornerVal = if ($config['explorer']['disable_mouse_sticky_corners']) { 0 } else { 6 }
+    Check-RegChange -Category "explorer" -SettingName "mouse_sticky_corners" -RegPath "HKCU:\Control Panel\Desktop" -ValName "MouseCornerClipLength" -DesiredValue $cornerVal
 }
 
 
@@ -1205,8 +1249,12 @@ if ($config['performance']['unlock_ultimate_performance']) {
 Write-Step "Inspecting UI Cleanliness & De-bloat Settings..."
 
 if ($null -ne $config['ui_debloat']['hide_taskbar_copilot_button']) {
-    $copilotVal = if ($config['ui_debloat']['hide_taskbar_copilot_button']) { 0 } else { 1 }
-    Check-RegChange -Category "ui_debloat" -SettingName "hide_copilot" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "ShowCopilotButton" -DesiredValue $copilotVal
+    if (-not $script:IsWindows11) {
+        Write-Skipped "ui_debloat.hide_copilot" "Windows 11 taskbar feature"
+    } else {
+        $copilotVal = if ($config['ui_debloat']['hide_taskbar_copilot_button']) { 0 } else { 1 }
+        Check-RegChange -Category "ui_debloat" -SettingName "hide_copilot" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "ShowCopilotButton" -DesiredValue $copilotVal
+    }
 }
 
 if ($null -ne $config['ui_debloat']['hide_taskbar_task_view']) {
@@ -1215,8 +1263,12 @@ if ($null -ne $config['ui_debloat']['hide_taskbar_task_view']) {
 }
 
 if ($null -ne $config['ui_debloat']['hide_taskbar_widgets']) {
-    $widgetsVal = if ($config['ui_debloat']['hide_taskbar_widgets']) { 0 } else { 1 }
-    Check-RegChange -Category "ui_debloat" -SettingName "hide_widgets" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "TaskbarDa" -DesiredValue $widgetsVal
+    if (-not $script:IsWindows11) {
+        Write-Skipped "ui_debloat.hide_widgets" "Windows 11 taskbar feature"
+    } else {
+        $widgetsVal = if ($config['ui_debloat']['hide_taskbar_widgets']) { 0 } else { 1 }
+        Check-RegChange -Category "ui_debloat" -SettingName "hide_widgets" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "TaskbarDa" -DesiredValue $widgetsVal
+    }
 }
 
 if ($null -ne $config['ui_debloat']['silence_tips_and_suggestions']) {

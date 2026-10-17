@@ -87,6 +87,8 @@ To view all saved snapshots:
 * **`disable_search_highlights`**: Removes Bing web search doodles, trending topics, and cartoons from the taskbar search box.
 * **`disable_store_app_prompt`**: Prevents the "Look for an app in the Microsoft Store" popup when opening unknown file types (goes straight to local Open With).
 * **`disable_lock_screen_ads`**: Turns off lock screen rotating spotlights, trivia overlays, tips, and promotional ads.
+* **`disable_snap_assist_popups`**: Turns off window Snap Assist thumbnail popups and flyouts when snapping windows.
+* **`disable_mouse_sticky_corners`**: Disables cursor sticking at multi-monitor boundary corners for seamless mouse transitions between displays.
 
 ### 3. Startup Speed & System Performance
 * **`disable_startup_delay`**: Removes the artificial Windows startup delay for desktop apps.
@@ -115,8 +117,12 @@ To view all saved snapshots:
 
 ---
 
-## Safety & Reversibility
+## Safety & Compatibility Guards
 
+* **OS Platform Guard**: Automatically detects non-Windows platforms (e.g. running from Linux or macOS via PowerShell Core) and immediately halts with a clear error without modifying anything.
+* **Version Isolation**:
+  * Windows 11-only features (such as `classic_context_menu`, `hide_taskbar_copilot_button`, and `hide_taskbar_widgets`) are automatically skipped when run on Windows 10.
+  * Windows 11 23H2+ features (such as `enable_taskbar_end_task`, which requires Build $\ge 22631$) are automatically skipped on earlier builds.
 * **Zero-Touch When Already Set**: Every setting is checked before applying. If a setting already has the desired value, it is reported as `[UNCHANGED]` and left alone.
 * **Automatic Snapshots**: A timestamped JSON snapshot of your system state is saved in `snapshots\` before any change is made.
 * **Full Rollback**: Running `.\setup.ps1 -Revert` reads the snapshot and restores original registry values, PowerShell profiles, and git configurations.

@@ -70,6 +70,13 @@ explorer:
   # Disables lock screen rotating spotlights, ads, fun facts, and tips
   disable_lock_screen_ads: true
 
+  # Disables Snap Assist popups (multi-window thumbnail suggestions & flyouts when snapping)
+  disable_snap_assist_popups: true
+
+  # Disables multi-monitor cursor sticky corners (allows smooth mouse transitions between displays)
+  disable_mouse_sticky_corners: true
+
+
 
 # ------------------------------------------------------------------------------
 # 3. Startup Speed & System Performance
