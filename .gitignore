@@ -1,0 +1,6 @@
+# Snapshots contain local system state dumps
+snapshots/*.json
+!snapshots/.gitkeep
+
+# Exported configs
+config.exported.yaml
