@@ -93,46 +93,8 @@ if (-not $global:__WT_CWD_TRACKER_LOADED) {
 # Helper function to remove JSON comments safely without breaking strings (e.g., https://)
 function Remove-JsonComments {
     param([string]$Json)
-    $sb = New-Object System.Text.StringBuilder
-    $inString = $false
-    $escape = $false
-    $i = 0
-    $len = $Json.Length
-    while ($i -lt $len) {
-        $c = $Json[$i]
-        if ($inString) {
-            $null = $sb.Append($c)
-            if ($escape) {
-                $escape = $false
-            } elseif ($c -eq '\') {
-                $escape = $true
-            } elseif ($c -eq '"') {
-                $inString = $false
-            }
-            $i++
-        } else {
-            if ($c -eq '"') {
-                $inString = $true
-                $null = $sb.Append($c)
-                $i++
-            } elseif ($c -eq '/' -and ($i + 1) -lt $len -and $Json[$i + 1] -eq '/') {
-                $i += 2
-                while ($i -lt $len -and $Json[$i] -ne "`n" -and $Json[$i] -ne "`r") {
-                    $i++
-                }
-            } elseif ($c -eq '/' -and ($i + 1) -lt $len -and $Json[$i + 1] -eq '*') {
-                $i += 2
-                while ($i + 1 -lt $len -and -not ($Json[$i] -eq '*' -and $Json[$i + 1] -eq '/')) {
-                    $i++
-                }
-                $i += 2
-            } else {
-                $null = $sb.Append($c)
-                $i++
-            }
-        }
-    }
-    return $sb.ToString()
+    $pattern = '(?s)("[^"\\]*(?:\\.[^"\\]*)*")|/\*.*?\*/|//[^\r\n]*'
+    return [regex]::Replace($Json, $pattern, '$1')
 }
 
 # -------------------------------------------------------------
