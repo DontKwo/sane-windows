@@ -156,7 +156,7 @@ function ConvertFrom-SimpleYaml {
         if ($line -match '^\s+-\s+(.+)$') {
             $val = $matches[1].Trim().Trim('"').Trim("'")
             if ($currentSection -and $currentListKey) {
-                $root[$currentSection][$currentListKey] += @($val)
+                $root[$currentSection][$currentListKey].Add($val)
             }
             continue
         }
@@ -169,7 +169,7 @@ function ConvertFrom-SimpleYaml {
 
             if ($valStr -eq '') {
                 $currentListKey = $key
-                $root[$currentSection][$key] = @()
+                $root[$currentSection][$key] = [System.Collections.Generic.List[object]]::new()
             } else {
                 $val = $valStr
                 if ($valStr -ieq 'true') { $val = $true }
