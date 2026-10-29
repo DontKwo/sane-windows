@@ -123,6 +123,9 @@ try {
 Write-Step "Configuring PowerShell Profiles..."
 
 $documentsDir = [Environment]::GetFolderPath('MyDocuments')
+if ([string]::IsNullOrEmpty($documentsDir)) {
+    $documentsDir = $HOME
+}
 $profileCandidates = @()
 
 # Common profile paths for Windows PowerShell (5.1) and PowerShell 7+
@@ -230,20 +233,20 @@ foreach ($wtPath in $wtSettingsPaths) {
         if ($Uninstall) {
             # Remove duplicateTab action & keybinding if set by us
             if ($settings.actions) {
-                $filteredActions = @()
+                $filteredActions = [System.Collections.Generic.List[object]]::new()
                 foreach ($act in $settings.actions) {
                     if ($act.id -eq "User.duplicateTab") { continue }
-                    $filteredActions += $act
+                    $filteredActions.Add($act)
                 }
-                $settings.actions = $filteredActions
+                $settings.actions = $filteredActions.ToArray()
             }
             if ($settings.PSObject.Properties['keybindings']) {
-                $filteredKb = @()
+                $filteredKb = [System.Collections.Generic.List[object]]::new()
                 foreach ($kb in $settings.keybindings) {
                     if ($kb.id -eq "User.duplicateTab" -or ($kb.keys -eq "ctrl+shift+d" -and $kb.command -eq "duplicateTab")) { continue }
-                    $filteredKb += $kb
+                    $filteredKb.Add($kb)
                 }
-                $settings.keybindings = $filteredKb
+                $settings.keybindings = $filteredKb.ToArray()
             }
             $jsonOut = $settings | ConvertTo-Json -Depth 20
             [System.IO.File]::WriteAllText($wtPath, $jsonOut, [System.Text.Encoding]::UTF8)
