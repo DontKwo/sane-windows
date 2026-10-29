@@ -401,6 +401,10 @@ function Export-CurrentConfiguration {
     $isUltimateUnlocked = (Test-UltimatePerformanceUnlocked)
 
     # UI Debloat
+    $isDarkMode = ((Get-RegValSafe -KeyPath "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" -ValName "AppsUseLightTheme") -eq 0 -and (Get-RegValSafe -KeyPath "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" -ValName "SystemUsesLightTheme") -eq 0)
+    $isTaskbarLeft = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "TaskbarAl") -eq 0)
+    $isAeroShakeDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "DisallowShaking") -eq 1)
+
     $hideCopilot = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "ShowCopilotButton") -eq 0)
     $hideTaskView = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "ShowTaskViewButton") -eq 0)
     $hideWidgets = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "TaskbarDa") -eq 0)
@@ -410,6 +414,7 @@ function Export-CurrentConfiguration {
     $disableSticky = if ($skFlags) { (([int]$skFlags) -band 4) -eq 0 } else { $false }
 
     # Developer
+    $isDevMode = ((Get-RegValSafe -KeyPath "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" -ValName "AllowDevelopmentWithoutDevLicense") -eq 1)
     $enableLongPaths = ((Get-RegValSafe -KeyPath "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -ValName "LongPathsEnabled") -eq 1)
     $crlfVal = (git config --global core.autocrlf 2>$null)
     $gitCrlf = ($crlfVal -ieq 'true')
@@ -541,6 +546,15 @@ performance:
 # 4. UI Cleanliness & De-bloat
 # ------------------------------------------------------------------------------
 ui_debloat:
+  # System-wide dark mode for Windows OS and apps
+  enable_dark_mode: $(To-YBool $isDarkMode)
+
+  # Windows 11: Reverts the centered taskbar back to the classic left-aligned position
+  left_align_taskbar: $(To-YBool $isTaskbarLeft)
+
+  # Disables Aero Shake (preventing all windows from minimizing when accidentally shaking a title bar)
+  disable_aero_shake: $(To-YBool $isAeroShakeDisabled)
+
   # Hides the Copilot button from the taskbar
   hide_taskbar_copilot_button: $(To-YBool $hideCopilot)
 
@@ -579,6 +593,9 @@ ui_debloat:
 # 5. Developer & Terminal Ergonomics
 # ------------------------------------------------------------------------------
 developer:
+  # Enables Windows Developer Mode (sideloading and advanced dev features)
+  enable_developer_mode: $(To-YBool $isDevMode)
+
   # Enables Win32 Long Path support (>260 character paths for Python/Node)
   enable_long_paths: $(To-YBool $enableLongPaths)
 
@@ -660,6 +677,10 @@ function Get-CurrentSystemState {
         @{ Section="performance"; Key="fast_startup"; Path="HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power"; Name="HiberbootEnabled"; Type="DWord" },
 
         # UI Debloat
+        @{ Section="ui_debloat"; Key="dark_mode_apps"; Path="HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize"; Name="AppsUseLightTheme"; Type="DWord" },
+        @{ Section="ui_debloat"; Key="dark_mode_system"; Path="HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize"; Name="SystemUsesLightTheme"; Type="DWord" },
+        @{ Section="ui_debloat"; Key="taskbar_al"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="TaskbarAl"; Type="DWord" },
+        @{ Section="ui_debloat"; Key="aero_shake"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="DisallowShaking"; Type="DWord" },
         @{ Section="ui_debloat"; Key="copilot_button"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="ShowCopilotButton"; Type="DWord" },
         @{ Section="ui_debloat"; Key="task_view_button"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="ShowTaskViewButton"; Type="DWord" },
         @{ Section="ui_debloat"; Key="widgets_button"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="TaskbarDa"; Type="DWord" },
@@ -688,6 +709,7 @@ function Get-CurrentSystemState {
         @{ Section="ui_debloat"; Key="filter_keys"; Path="HKCU:\Control Panel\Accessibility\Keyboard Response"; Name="Flags"; Type="String" },
 
         # Developer
+        @{ Section="developer"; Key="dev_mode"; Path="HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock"; Name="AllowDevelopmentWithoutDevLicense"; Type="DWord" },
         @{ Section="developer"; Key="long_paths"; Path="HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem"; Name="LongPathsEnabled"; Type="DWord" },
 
         # Windows Update
@@ -1249,6 +1271,26 @@ if ($config['performance']['unlock_ultimate_performance']) {
 # -------------------------------------------------------------
 Write-Step "Inspecting UI Cleanliness & De-bloat Settings..."
 
+if ($null -ne $config['ui_debloat']['enable_dark_mode']) {
+    $darkVal = if ($config['ui_debloat']['enable_dark_mode']) { 0 } else { 1 }
+    Check-RegChange -Category "ui_debloat" -SettingName "dark_mode_apps" -RegPath "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" -ValName "AppsUseLightTheme" -DesiredValue $darkVal
+    Check-RegChange -Category "ui_debloat" -SettingName "dark_mode_system" -RegPath "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" -ValName "SystemUsesLightTheme" -DesiredValue $darkVal
+}
+
+if ($null -ne $config['ui_debloat']['left_align_taskbar']) {
+    if (-not $script:IsWindows11) {
+        Write-Skipped "ui_debloat.left_align_taskbar" "Windows 11 taskbar feature"
+    } else {
+        $alignVal = if ($config['ui_debloat']['left_align_taskbar']) { 0 } else { 1 }
+        Check-RegChange -Category "ui_debloat" -SettingName "left_align_taskbar" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "TaskbarAl" -DesiredValue $alignVal
+    }
+}
+
+if ($null -ne $config['ui_debloat']['disable_aero_shake']) {
+    $shakeVal = if ($config['ui_debloat']['disable_aero_shake']) { 1 } else { 0 }
+    Check-RegChange -Category "ui_debloat" -SettingName "disable_aero_shake" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "DisallowShaking" -DesiredValue $shakeVal
+}
+
 if ($null -ne $config['ui_debloat']['hide_taskbar_copilot_button']) {
     if (-not $script:IsWindows11) {
         Write-Skipped "ui_debloat.hide_copilot" "Windows 11 taskbar feature"
@@ -1331,6 +1373,11 @@ if ($null -ne $config['ui_debloat']['disable_sticky_keys_popup']) {
 # 5. Developer & Terminal Ergonomics
 # -------------------------------------------------------------
 Write-Step "Inspecting Developer & Terminal Ergonomics..."
+
+if ($null -ne $config['developer']['enable_developer_mode']) {
+    $devVal = if ($config['developer']['enable_developer_mode']) { 1 } else { 0 }
+    Check-RegChange -Category "developer" -SettingName "enable_developer_mode" -RegPath "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" -ValName "AllowDevelopmentWithoutDevLicense" -DesiredValue $devVal
+}
 
 if ($null -ne $config['developer']['enable_long_paths']) {
     $longVal = if ($config['developer']['enable_long_paths']) { 1 } else { 0 }

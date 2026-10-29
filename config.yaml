@@ -100,6 +100,15 @@ performance:
 # 4. UI Cleanliness & De-bloat
 # ------------------------------------------------------------------------------
 ui_debloat:
+  # System-wide dark mode for Windows OS and apps
+  enable_dark_mode: true
+
+  # Windows 11: Reverts the centered taskbar back to the classic left-aligned position
+  left_align_taskbar: true
+
+  # Disables Aero Shake (preventing all windows from minimizing when accidentally shaking a title bar)
+  disable_aero_shake: true
+
   # Hides the Copilot button from the taskbar
   hide_taskbar_copilot_button: true
 
@@ -138,6 +147,9 @@ ui_debloat:
 # 5. Developer & Terminal Ergonomics
 # ------------------------------------------------------------------------------
 developer:
+  # Enables Windows Developer Mode (sideloading and advanced dev features)
+  enable_developer_mode: true
+
   # Enables Win32 Long Path support (>260 character paths for Python/Node)
   enable_long_paths: true
 
