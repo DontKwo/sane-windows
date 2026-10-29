@@ -388,6 +388,7 @@ function Export-CurrentConfiguration {
     $isSearchHighlightsDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" -ValName "IsDynamicSearchBoxEnabled") -eq 0)
     $isStorePromptDisabled = ((Get-RegValSafe -KeyPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" -ValName "NoUseStoreOpenWith") -eq 1)
     $isLockOverlayDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -ValName "RotatingLockScreenOverlayEnabled") -eq 0)
+    $isLockSubDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -ValName "SubscribedContent-338387Enabled") -eq 0)
     $isLockScreenAdsDisabled = ($isLockOverlayDisabled -and $isLockSubDisabled)
     $isSnapAssistDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "SnapAssist") -eq 0)
     $isMouseStickyCornersDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Control Panel\Desktop" -ValName "MouseCornerClipLength") -eq 0)
@@ -1195,7 +1196,7 @@ if ($null -ne $config['explorer']['disable_store_app_prompt']) {
 if ($null -ne $config['explorer']['disable_lock_screen_ads']) {
     $lockAdVal = if ($config['explorer']['disable_lock_screen_ads']) { 0 } else { 1 }
     Check-RegChange -Category "explorer" -SettingName "lock_screen_overlay" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -ValName "RotatingLockScreenOverlayEnabled" -DesiredValue $lockAdVal
-    Check-RegChange -Category "explorer" -SettingName "lock_screen_sub_content_338387" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -ValName "SubscribedContent-338387Enabled" -DesiredValue $lockAdVal
+    Check-RegChange -Category "explorer" -SettingName "lock_screen_sub" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -ValName "SubscribedContent-338387Enabled" -DesiredValue $lockAdVal
 }
 
 if ($null -ne $config['explorer']['disable_snap_assist_popups']) {
