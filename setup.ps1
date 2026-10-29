@@ -200,17 +200,31 @@ function Get-RegValSafe {
 function Set-RegValSafe {
     param([string]$KeyPath, [string]$ValName, $Value, [string]$Type = "DWord")
     if (-not (Test-Path -LiteralPath $KeyPath)) {
-        if ($KeyPath -like "HKCU:\*") {
-            $sub = $KeyPath.Substring(5)
-            [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($sub) | Out-Null
-        } elseif ($KeyPath -like "HKLM:\*") {
-            $sub = $KeyPath.Substring(5)
-            [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey($sub) | Out-Null
-        } else {
-            New-Item -Path $KeyPath -Force -ErrorAction Stop | Out-Null
+        try {
+            if ($KeyPath -like "HKCU:\*") {
+                $sub = $KeyPath.Substring(5)
+                $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($sub)
+                if ($null -ne $key) { Write-Verbose "Created HKCU registry key: $sub" }
+            } elseif ($KeyPath -like "HKLM:\*") {
+                $sub = $KeyPath.Substring(5)
+                $key = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey($sub)
+                if ($null -ne $key) { Write-Verbose "Created HKLM registry key: $sub" }
+            } else {
+                $key = New-Item -Path $KeyPath -Force -ErrorAction Stop
+                if ($null -ne $key) { Write-Verbose "Created registry path: $KeyPath" }
+            }
+        } catch {
+            Write-Warn "Failed to create registry key $KeyPath : $_"
+            throw
         }
     }
-    Set-ItemProperty -LiteralPath $KeyPath -Name $ValName -Value $Value -Type $Type -Force -ErrorAction Stop | Out-Null
+    try {
+        $prop = Set-ItemProperty -LiteralPath $KeyPath -Name $ValName -Value $Value -Type $Type -Force -ErrorAction Stop
+        if ($null -ne $prop) { Write-Verbose "Set registry value $ValName at $KeyPath" }
+    } catch {
+        Write-Warn "Failed to set registry value $ValName at $KeyPath : $_"
+        throw
+    }
 }
 
 function Remove-RegValSafe {
@@ -442,7 +456,7 @@ function Export-CurrentConfiguration {
 
     $exportDir = Split-Path -Parent $OutputPath
     if ($exportDir -and -not (Test-Path -LiteralPath $exportDir)) {
-        New-Item -ItemType Directory -Path $exportDir -Force | Out-Null
+        $null = New-Item -ItemType Directory -Path $exportDir -Force
     }
 
     $yaml = @"
@@ -635,7 +649,7 @@ windows_update:
 # --- Snapshot Engine ---
 $SnapshotsDir = Join-Path $ScriptDir "snapshots"
 if (-not (Test-Path $SnapshotsDir)) {
-    New-Item -ItemType Directory -Path $SnapshotsDir -Force | Out-Null
+    $null = New-Item -ItemType Directory -Path $SnapshotsDir -Force
 }
 
 function Get-CurrentSystemState {
@@ -918,7 +932,7 @@ if ($Revert) {
     }
 
     # Revert PowerShell profiles
-    & "$ScriptDir\setup_duplicate_tab.ps1" -Uninstall | Out-Null
+    $null = & "$ScriptDir\setup_duplicate_tab.ps1" -Uninstall
     Write-Info "PowerShell profile duplicate tab hooks reverted."
 
     if ($explorerNeedsRestart -and -not $NoExplorerRestart) {
@@ -1069,7 +1083,7 @@ if ($config['privacy']['disable_telemetry_tasks']) {
                 foreach ($at in $tasksToDisable) {
                     $to = Get-ScheduledTask -TaskPath $at.Path -TaskName $at.Name -ErrorAction SilentlyContinue
                     if ($to -and $to.State -ne "Disabled") {
-                        Disable-ScheduledTask -TaskPath $at.Path -TaskName $at.Name -ErrorAction SilentlyContinue | Out-Null
+                        $null = Disable-ScheduledTask -TaskPath $at.Path -TaskName $at.Name -ErrorAction SilentlyContinue
                     }
                 }
             }
@@ -1114,8 +1128,8 @@ if ($null -ne $config['explorer']['classic_context_menu']) {
             if (-not $isClassic) {
                 Register-PlannedChange -Category "explorer" -SettingName "classic_context_menu" -CurrentValue "Windows 11 Modern" -DesiredValue "Windows 10 Classic Style" -AffectsExplorer $true -Arguments @($clsidKey) -Action {
                     param($k)
-                    New-Item -Path "$k\InprocServer32" -Force | Out-Null
-                    Set-Item -Path "$k\InprocServer32" -Value "" | Out-Null
+                    $null = New-Item -Path "$k\InprocServer32" -Force
+                    $null = Set-Item -Path "$k\InprocServer32" -Value ""
                 }
             } else {
                 Write-Unchanged "explorer.classic_context_menu" "Enabled (Windows 10 Style)"
@@ -1259,7 +1273,7 @@ if ($config['performance']['unlock_ultimate_performance']) {
     $isUnlocked = Test-UltimatePerformanceUnlocked
     if (-not $isUnlocked) {
         Register-PlannedChange -Category "performance" -SettingName "unlock_ultimate_performance" -CurrentValue "Hidden" -DesiredValue "Unlocked" -AffectsExplorer $false -Action {
-            powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 | Out-Null
+            $null = powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61
         }
     } else {
         Write-Unchanged "performance.unlock_ultimate_performance" "Unlocked"
@@ -1458,7 +1472,7 @@ if (Get-Module -ListAvailable -Name PSReadLine) {
             Register-PlannedChange -Category "developer" -SettingName "powershell_shortcuts" -CurrentValue "<needs update>" -DesiredValue "Inject shortcuts into $profName" -AffectsExplorer $false -Arguments @($p, $devAliasSnippet, $devAliasMarkerStart, $devAliasMarkerEnd, $legacyMarkerStart, $legacyMarkerEnd) -Action {
                 param($prof, $snip, $startMarker, $endMarker, $legStart, $legEnd)
                 $pDir = Split-Path -Parent $prof
-                if (-not (Test-Path $pDir)) { New-Item -ItemType Directory -Path $pDir -Force | Out-Null }
+                if (-not (Test-Path $pDir)) { $null = New-Item -ItemType Directory -Path $pDir -Force }
                 $existing = if (Test-Path $prof) { Get-Content $prof -Raw } else { "" }
                 if ($null -eq $existing) { $existing = "" }
 
