@@ -104,7 +104,7 @@ ui_debloat:
   enable_dark_mode: true
 
   # Windows 11: Reverts the centered taskbar back to the classic left-aligned position
-  left_align_taskbar: true
+  left_align_taskbar: false
 
   # Disables Aero Shake (preventing all windows from minimizing when accidentally shaking a title bar)
   disable_aero_shake: true
@@ -148,7 +148,7 @@ ui_debloat:
 # ------------------------------------------------------------------------------
 developer:
   # Enables Windows Developer Mode (sideloading and advanced dev features)
-  enable_developer_mode: true
+  enable_developer_mode: false
 
   # Enables Win32 Long Path support (>260 character paths for Python/Node)
   enable_long_paths: true
