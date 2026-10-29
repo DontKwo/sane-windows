@@ -1350,7 +1350,25 @@ if ($null -ne $config['ui_debloat']['silence_tips_and_suggestions']) {
 # Bloatware App Removal
 if ($config['ui_debloat']['remove_bloatware_apps'] -and $config['ui_debloat']['bloatware_list']) {
     $appsToRemove = $config['ui_debloat']['bloatware_list']
+    $allowedApps = @(
+        "Microsoft.BingNews",
+        "Microsoft.BingWeather",
+        "Microsoft.GetHelp",
+        "Microsoft.Getstarted",
+        "Microsoft.MicrosoftSolitaireCollection",
+        "Microsoft.SkypeApp",
+        "Microsoft.Todos",
+        "Microsoft.ZuneVideo",
+        "Clipchamp.Clipchamp",
+        "ByteDancePte.Ltd.TikTok",
+        "Disney.37853FC2267DE",
+        "SpotifyAB.SpotifyMusic"
+    )
     foreach ($appPkg in $appsToRemove) {
+        if ($appPkg -notin $allowedApps) {
+            Write-Skipped "ui_debloat.remove_app" "$appPkg (not in allowlist)"
+            continue
+        }
         $installed = Get-AppxPackage -Name $appPkg -ErrorAction SilentlyContinue
         if ($installed) {
             Register-PlannedChange -Category "ui_debloat" -SettingName "remove_app" -CurrentValue "$appPkg (installed)" -DesiredValue "Uninstall" -AffectsExplorer $false -Arguments @($appPkg) -Action {
