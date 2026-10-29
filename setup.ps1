@@ -1573,10 +1573,34 @@ if ($WhatIf) {
 
 # Interactive Confirmation
 if (-not $Yes) {
-    $choice = Read-Host "Apply these $($script:pendingChanges.Count) change(s)? [Y/n]"
-    if ($choice -ne '' -and $choice -notmatch '^[Yy]$') {
-        Write-Host "`n[x] Aborted by user. No changes were made.`n" -ForegroundColor Yellow
-        exit 0
+    $validChoice = $false
+    $interactiveMode = $false
+    while (-not $validChoice) {
+        $choice = Read-Host "Apply these $($script:pendingChanges.Count) change(s)? [Y(es) / N(o) / I(ndividually)]"
+        if ($choice -match '^[Yy]$' -or $choice -eq '') {
+            $validChoice = $true
+        } elseif ($choice -match '^[Ii]$') {
+            $validChoice = $true
+            $interactiveMode = $true
+        } elseif ($choice -match '^[Nn]$') {
+            Write-Host "`n[x] Aborted by user. No changes were made.`n" -ForegroundColor Yellow
+            exit 0
+        }
+    }
+
+    if ($interactiveMode) {
+        $filteredChanges = [System.Collections.ArrayList]@()
+        foreach ($change in $script:pendingChanges) {
+            $ans = Read-Host "Apply $($change.Category).$($change.Setting) ($($change.CurrentValue) -> $($change.DesiredValue))? [Y/n]"
+            if ($ans -match '^[Yy]$' -or $ans -eq '') {
+                $null = $filteredChanges.Add($change)
+            }
+        }
+        $script:pendingChanges = $filteredChanges
+        if ($script:pendingChanges.Count -eq 0) {
+            Write-Host "`n[x] No changes selected. Aborted.`n" -ForegroundColor Yellow
+            exit 0
+        }
     }
 }
 

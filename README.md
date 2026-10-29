@@ -19,9 +19,10 @@ A modular, snapshot-backed setup script designed for any Windows 10/11 machine. 
                   v
      [Planned Changes Preview]   <-- Displays a table of planned diffs
                   |
-       Ask user to confirm? [Y/n]
-       ├── [n] -> Aborts cleanly (no changes made)
-       └── [Y] -> Takes safety snapshot & applies changes
+       Ask user to confirm? [Y(es) / N(o) / I(ndividually)]
+       ├── [N] -> Aborts cleanly (no changes made)
+       ├── [Y] -> Takes safety snapshot & applies all changes
+       └── [I] -> Prompts for each change individually, then applies selected ones
 ```
 
 ---
