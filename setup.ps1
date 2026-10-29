@@ -1057,17 +1057,19 @@ if ($config['privacy']['disable_telemetry_tasks']) {
             @{ Path="\Microsoft\Windows\Customer Experience Improvement Program\"; Name="UsbCeip" },
             @{ Path="\Microsoft\Windows\DiskDiagnostic\"; Name="Microsoft-Windows-DiskDiagnosticDataCollector" }
         )
+        $allTasks = Get-ScheduledTask -ErrorAction SilentlyContinue
         $activeTasks = @()
         foreach ($t in $tasksToDisable) {
-            $taskObj = Get-ScheduledTask -TaskPath $t.Path -TaskName $t.Name -ErrorAction SilentlyContinue
+            $taskObj = $allTasks | Where-Object { $_.TaskPath -eq $t.Path -and $_.TaskName -eq $t.Name }
             if ($taskObj -and $taskObj.State -ne "Disabled") {
                 $activeTasks += $t
             }
         }
         if ($activeTasks.Count -gt 0) {
             Register-PlannedChange -Category "privacy" -SettingName "disable_telemetry_tasks" -CurrentValue "$($activeTasks.Count) tasks active" -DesiredValue "Disable $($activeTasks.Count) tasks" -AffectsExplorer $false -Action {
+                $allActionTasks = Get-ScheduledTask -ErrorAction SilentlyContinue
                 foreach ($at in $tasksToDisable) {
-                    $to = Get-ScheduledTask -TaskPath $at.Path -TaskName $at.Name -ErrorAction SilentlyContinue
+                    $to = $allActionTasks | Where-Object { $_.TaskPath -eq $at.Path -and $_.TaskName -eq $at.Name }
                     if ($to -and $to.State -ne "Disabled") {
                         Disable-ScheduledTask -TaskPath $at.Path -TaskName $at.Name -ErrorAction SilentlyContinue | Out-Null
                     }
