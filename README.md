@@ -97,6 +97,9 @@ To view all saved snapshots:
 * **`unlock_ultimate_performance`**: Unlocks the hidden Windows "Ultimate Performance" power plan to minimize hardware micro-stutters and latency.
 
 ### 4. UI Cleanliness & De-bloat
+* **`enable_dark_mode`**: System-wide dark mode for Windows OS and apps.
+* **`left_align_taskbar`**: Windows 11: Reverts the centered taskbar back to the classic left-aligned position.
+* **`disable_aero_shake`**: Disables Aero Shake (preventing all windows from minimizing when accidentally shaking a title bar).
 * **`hide_taskbar_copilot_button`**: Hides the Copilot button from the taskbar.
 * **`hide_taskbar_task_view`**: Hides the Task View (virtual desktops) button.
 * **`hide_taskbar_widgets`**: Hides the Widgets / Weather board from the taskbar.
@@ -105,6 +108,7 @@ To view all saved snapshots:
 * **`remove_bloatware_apps`**: Removes pre-installed promotional junk apps (TikTok, Disney+, Solitaire, News, Weather, Skype, Clipchamp, etc.).
 
 ### 5. Developer & Terminal Ergonomics
+* **`enable_developer_mode`**: Enables Windows Developer Mode (sideloading and advanced dev features).
 * **`enable_long_paths`**: Enables Win32 Long Paths (>260 character paths).
 * **`configure_git_autocrlf`**: Configures `git config --global core.autocrlf true`.
 * **`enable_powershell_shortcuts`**: Adds aliases (`which`, `ll`) and `PSReadLine` history prediction autocompletion to PowerShell profiles.
