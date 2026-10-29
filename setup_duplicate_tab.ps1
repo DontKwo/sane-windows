@@ -268,19 +268,21 @@ foreach ($wtPath in $wtSettingsPaths) {
         if ($Uninstall) {
             # Remove duplicateTab action & keybinding if set by us
             if ($settings.actions) {
-                $filteredActions = @()
-                foreach ($act in $settings.actions) {
-                    if ($act.id -eq "User.duplicateTab") { continue }
-                    $filteredActions += $act
-                }
+                $filteredActions = @(
+                    foreach ($act in $settings.actions) {
+                        if ($act.id -eq "User.duplicateTab") { continue }
+                        $act
+                    }
+                )
                 $settings.actions = $filteredActions
             }
             if ($settings.PSObject.Properties['keybindings']) {
-                $filteredKb = @()
-                foreach ($kb in $settings.keybindings) {
-                    if ($kb.id -eq "User.duplicateTab" -or ($kb.keys -eq "ctrl+shift+d" -and $kb.command -eq "duplicateTab")) { continue }
-                    $filteredKb += $kb
-                }
+                $filteredKb = @(
+                    foreach ($kb in $settings.keybindings) {
+                        if ($kb.id -eq "User.duplicateTab" -or ($kb.keys -eq "ctrl+shift+d" -and $kb.command -eq "duplicateTab")) { continue }
+                        $kb
+                    }
+                )
                 $settings.keybindings = $filteredKb
             }
             $jsonOut = $settings | ConvertTo-Json -Depth 20
