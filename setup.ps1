@@ -130,59 +130,6 @@ function Test-IsAdmin {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-# --- Lightweight Pure-PowerShell YAML Parser ---
-function ConvertFrom-SimpleYaml {
-    param([string]$YamlContent)
-    $lines = $YamlContent -split "`r?`n"
-    $root = @{}
-    $currentSection = $null
-    $currentListKey = $null
-
-    foreach ($rawLine in $lines) {
-        $line = $rawLine
-        if ($line -match '^\s*#') { continue }
-        if ($line.Trim().Length -eq 0) { continue }
-
-        # Section header: "section:"
-        if ($line -match '^([a-zA-Z0-9_-]+):\s*$') {
-            $sectionName = $matches[1]
-            $root[$sectionName] = @{}
-            $currentSection = $sectionName
-            $currentListKey = $null
-            continue
-        }
-
-        # List item: "  - value"
-        if ($line -match '^\s+-\s+(.+)$') {
-            $val = $matches[1].Trim().Trim('"').Trim("'")
-            if ($currentSection -and $currentListKey) {
-                $root[$currentSection][$currentListKey] += @($val)
-            }
-            continue
-        }
-
-        # Key-Value: "  key: value"
-        if ($line -match '^\s+([a-zA-Z0-9_-]+):\s*(.*)$') {
-            $key = $matches[1]
-            $valStr = $matches[2].Trim()
-            $currentListKey = $null
-
-            if ($valStr -eq '') {
-                $currentListKey = $key
-                $root[$currentSection][$key] = @()
-            } else {
-                $val = $valStr
-                if ($valStr -ieq 'true') { $val = $true }
-                elseif ($valStr -ieq 'false') { $val = $false }
-                elseif ($valStr -match '^-?\d+$') { $val = [int]$valStr }
-                else { $val = $valStr.Trim('"').Trim("'") }
-                $root[$currentSection][$key] = $val
-            }
-            continue
-        }
-    }
-    return $root
-}
 
 # --- Safe Registry Access ---
 function Get-RegValSafe {
@@ -938,9 +885,17 @@ if (-not (Test-Path $ConfigPath)) {
     exit 1
 }
 
+# --- Load powershell-yaml ---
+if (-not (Get-Module -ListAvailable -Name powershell-yaml)) {
+    Write-Info "Installing required module: powershell-yaml..."
+    Install-PackageProvider -Name NuGet -Force -Scope CurrentUser -ErrorAction SilentlyContinue | Out-Null
+    Install-Module -Name powershell-yaml -Force -Scope CurrentUser -AllowClobber -ErrorAction Stop | Out-Null
+}
+Import-Module powershell-yaml -ErrorAction Stop
+
 Write-Info "Loading configuration from: $ConfigPath"
 $configContent = Get-Content $ConfigPath -Raw
-$config = ConvertFrom-SimpleYaml $configContent
+$config = ConvertFrom-Yaml $configContent
 
 $isAdmin = Test-IsAdmin
 if (-not $isAdmin) {
