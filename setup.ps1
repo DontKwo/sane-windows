@@ -638,18 +638,8 @@ if (-not (Test-Path $SnapshotsDir)) {
     New-Item -ItemType Directory -Path $SnapshotsDir -Force | Out-Null
 }
 
-function Get-CurrentSystemState {
-    $state = [ordered]@{
-        timestamp = (Get-Date).ToString("o")
-        isAdmin   = (Test-IsAdmin)
-        registry  = [ordered]@{}
-        git       = [ordered]@{}
-        terminal  = [ordered]@{}
-        profiles  = [ordered]@{}
-    }
-
-    # Registry Settings Definitions
-    $regTargets = @(
+function Get-RegistryTargets {
+    return @(
         # Privacy
         @{ Section="privacy"; Key="disable_telemetry_hklm1"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"; Name="AllowTelemetry"; Type="DWord" },
         @{ Section="privacy"; Key="disable_telemetry_hklm2"; Path="HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection"; Name="AllowTelemetry"; Type="DWord" },
@@ -716,6 +706,20 @@ function Get-CurrentSystemState {
         @{ Section="windows_update"; Key="no_auto_reboot"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"; Name="NoAutoRebootWithLoggedOnUsers"; Type="DWord" },
         @{ Section="windows_update"; Key="exclude_drivers"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"; Name="ExcludeWUDriversInQualityUpdate"; Type="DWord" }
     )
+}
+
+function Get-CurrentSystemState {
+    $state = [ordered]@{
+        timestamp = (Get-Date).ToString("o")
+        isAdmin   = (Test-IsAdmin)
+        registry  = [ordered]@{}
+        git       = [ordered]@{}
+        terminal  = [ordered]@{}
+        profiles  = [ordered]@{}
+    }
+
+    # Registry Settings Definitions
+    $regTargets = Get-RegistryTargets
 
     foreach ($t in $regTargets) {
         $regKeyId = "$($t.Path)::$($t.Name)"
