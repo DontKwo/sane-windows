@@ -825,6 +825,8 @@ if ($Revert) {
     $revertedCount = 0
     $explorerNeedsRestart = $false
 
+    $registryCache = @{}
+
     # Revert Registry
     foreach ($prop in $snapData.registry.PSObject.Properties) {
         $item = $prop.Value
@@ -850,15 +852,29 @@ if ($Revert) {
             continue
         }
 
+        # Cache key properties to avoid N+1 queries
+        if (-not $registryCache.Contains($path)) {
+            if (Test-Path -LiteralPath $path) {
+                $registryCache[$path] = Get-ItemProperty -LiteralPath $path -ErrorAction SilentlyContinue
+            } else {
+                $registryCache[$path] = $null
+            }
+        }
+        $keyProps = $registryCache[$path]
+
+        # Ignore PowerShell intrinsic properties
+        $isIntrinsic = @("PSPath", "PSParentPath", "PSChildName", "PSDrive", "PSProvider") -contains $name
+
         if (-not $existed) {
-            if ($null -ne (Get-RegValSafe -KeyPath $path -ValName $name)) {
+            $currVal = if ($null -ne $keyProps -and -not $isIntrinsic) { $keyProps.$name } else { $null }
+            if ($null -ne $currVal) {
                 Remove-RegValSafe -KeyPath $path -ValName $name
                 Write-Changed "$path::$name" "Modified" "Removed (did not originally exist)"
                 $revertedCount++
                 if ($path -like "*Explorer*") { $explorerNeedsRestart = $true }
             }
         } else {
-            $currVal = Get-RegValSafe -KeyPath $path -ValName $name
+            $currVal = if ($null -ne $keyProps -and -not $isIntrinsic) { $keyProps.$name } else { $null }
             if ($currVal -ne $origVal) {
                 Set-RegValSafe -KeyPath $path -ValName $name -Value $origVal -Type $item.Type
                 Write-Changed "$path::$name" "$currVal" "$origVal"
