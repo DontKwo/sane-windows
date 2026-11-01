@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    name: Run Quality Checks
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Pester test suites
+        shell: pwsh
+        run: Invoke-Pester -Path ./*.Tests.ps1
+
+      - name: Verify setup.ps1 dry run compilation
+        shell: pwsh
+        run: ./setup.ps1 -WhatIf
+
+      - name: Verify clean-storage.ps1 storage audit
+        shell: pwsh
+        run: ./clean-storage.ps1 -WhatIf
