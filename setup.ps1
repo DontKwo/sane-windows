@@ -314,63 +314,89 @@ function Test-UltimatePerformanceUnlocked {
     return $false
 }
 
+function Remove-JsonComments {
+    param([string]$Json)
+    $pattern = '(?s)("[^"\\]*(?:\\.[^"\\]*)*")|/\*.*?\*/|//[^\r\n]*'
+    return [regex]::Replace($Json, $pattern, '$1')
+}
+
+function Get-WindowsTerminalSettingsPaths {
+    return @(
+        "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json",
+        "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json",
+        "$env:LOCALAPPDATA\Microsoft\Windows Terminal\settings.json",
+        "$env:LOCALAPPDATA\Microsoft\Windows Terminal Preview\settings.json"
+    )
+}
+
 function Get-TerminalCopyPasteConfigured {
-    $wtPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
-    if (-not (Test-Path -LiteralPath $wtPath)) { return $false }
-    try {
-        $wt = Get-Content -LiteralPath $wtPath -Raw | ConvertFrom-Json
-        $copyShift = $wt.keybindings | Where-Object { ($_.id -like "*copy*" -or $_.command -eq "copy" -or ($_.command.action -eq "copy")) -and $_.keys -eq "ctrl+shift+c" }
-        $pasteShift = $wt.keybindings | Where-Object { ($_.id -like "*paste*" -or $_.command -eq "paste") -and $_.keys -eq "ctrl+shift+v" }
-        $cUnbound = $wt.keybindings | Where-Object { $_.keys -eq "ctrl+c" -and ($_.action -eq "unbound" -or $_.command -eq "unbound" -or [string]::IsNullOrEmpty($_.id)) }
-        $vUnbound = $wt.keybindings | Where-Object { $_.keys -eq "ctrl+v" -and ($_.action -eq "unbound" -or $_.command -eq "unbound" -or [string]::IsNullOrEmpty($_.id)) }
-        return ($null -ne $copyShift -and $null -ne $pasteShift -and $null -ne $cUnbound -and $null -ne $vUnbound)
-    } catch { return $false }
+    $wtSettingsPaths = Get-WindowsTerminalSettingsPaths
+    foreach ($wtPath in $wtSettingsPaths) {
+        if (-not (Test-Path -LiteralPath $wtPath)) { continue }
+        try {
+            $raw = Get-Content -LiteralPath $wtPath -Raw
+            $clean = Remove-JsonComments $raw
+            $wt = $clean | ConvertFrom-Json
+            $copyShift = $wt.keybindings | Where-Object { ($_.id -like "*copy*" -or $_.command -eq "copy" -or ($_.command.action -eq "copy")) -and $_.keys -eq "ctrl+shift+c" }
+            $pasteShift = $wt.keybindings | Where-Object { ($_.id -like "*paste*" -or $_.command -eq "paste") -and $_.keys -eq "ctrl+shift+v" }
+            $cUnbound = $wt.keybindings | Where-Object { $_.keys -eq "ctrl+c" -and ($_.action -eq "unbound" -or $_.command -eq "unbound" -or [string]::IsNullOrEmpty($_.id)) }
+            $vUnbound = $wt.keybindings | Where-Object { $_.keys -eq "ctrl+v" -and ($_.action -eq "unbound" -or $_.command -eq "unbound" -or [string]::IsNullOrEmpty($_.id)) }
+            if ($null -ne $copyShift -and $null -ne $pasteShift -and $null -ne $cUnbound -and $null -ne $vUnbound) {
+                return $true
+            }
+        } catch { }
+    }
+    return $false
 }
 
 function Set-TerminalCopyPasteKeybindings {
     param([bool]$Enable)
-    $wtPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
-    if (-not (Test-Path -LiteralPath $wtPath)) { return }
-    try {
-        $wt = Get-Content -LiteralPath $wtPath -Raw | ConvertFrom-Json
-        $kbs = [System.Collections.ArrayList]@()
-        if ($wt.keybindings) {
-            foreach ($kb in $wt.keybindings) {
-                if ($kb.keys -in @("ctrl+c", "ctrl+v", "ctrl+shift+c", "ctrl+shift+v")) {
-                    continue
+    $wtSettingsPaths = Get-WindowsTerminalSettingsPaths
+    foreach ($wtPath in $wtSettingsPaths) {
+        if (-not (Test-Path -LiteralPath $wtPath)) { continue }
+        try {
+            $raw = Get-Content -LiteralPath $wtPath -Raw
+            $clean = Remove-JsonComments $raw
+            $wt = $clean | ConvertFrom-Json
+            $kbs = [System.Collections.ArrayList]@()
+            if ($wt.keybindings) {
+                foreach ($kb in $wt.keybindings) {
+                    if ($kb.keys -in @("ctrl+c", "ctrl+v", "ctrl+shift+c", "ctrl+shift+v")) {
+                        continue
+                    }
+                    $null = $kbs.Add($kb)
                 }
-                $null = $kbs.Add($kb)
             }
+            if ($Enable) {
+                $copyAction = $wt.actions | Where-Object { $_.command -eq "copy" -or ($_.command.action -eq "copy") }
+                $copyId = if ($copyAction) { $copyAction.id } else { $null }
+
+                $pasteAction = $wt.actions | Where-Object { $_.command -eq "paste" }
+                $pasteId = if ($pasteAction) { $pasteAction.id } else { $null }
+
+                $copyBinding = if ($copyId) { [PSCustomObject]@{ id = $copyId; keys = "ctrl+shift+c" } } else { [PSCustomObject]@{ command = [PSCustomObject]@{ action = "copy"; singleLine = $false }; keys = "ctrl+shift+c" } }
+                $pasteBinding = if ($pasteId) { [PSCustomObject]@{ id = $pasteId; keys = "ctrl+shift+v" } } else { [PSCustomObject]@{ command = "paste"; keys = "ctrl+shift+v" } }
+
+                $null = $kbs.Add($copyBinding)
+                $null = $kbs.Add($pasteBinding)
+                $null = $kbs.Add([PSCustomObject]@{ command = "unbound"; keys = "ctrl+v" })
+                $null = $kbs.Add([PSCustomObject]@{ command = "unbound"; keys = "ctrl+c" })
+            } else {
+                $copyAction = $wt.actions | Where-Object { $_.command -eq "copy" -or ($_.command.action -eq "copy") }
+                if ($copyAction) {
+                    $null = $kbs.Add([PSCustomObject]@{ id = $copyAction.id; keys = "ctrl+c" })
+                }
+                $pasteAction = $wt.actions | Where-Object { $_.command -eq "paste" }
+                if ($pasteAction) {
+                    $null = $kbs.Add([PSCustomObject]@{ id = $pasteAction.id; keys = "ctrl+v" })
+                }
+            }
+            $wt.keybindings = $kbs
+            $json = $wt | ConvertTo-Json -Depth 20
+            [System.IO.File]::WriteAllText($wtPath, $json, [System.Text.Encoding]::UTF8)
+        } catch {
+            Write-Warn "Failed to update Windows Terminal settings at $wtPath : $_"
         }
-        if ($Enable) {
-            $copyAction = $wt.actions | Where-Object { $_.command -eq "copy" -or ($_.command.action -eq "copy") }
-            $copyId = if ($copyAction) { $copyAction.id } else { $null }
-
-            $pasteAction = $wt.actions | Where-Object { $_.command -eq "paste" }
-            $pasteId = if ($pasteAction) { $pasteAction.id } else { $null }
-
-            $copyBinding = if ($copyId) { [PSCustomObject]@{ id = $copyId; keys = "ctrl+shift+c" } } else { [PSCustomObject]@{ command = [PSCustomObject]@{ action = "copy"; singleLine = $false }; keys = "ctrl+shift+c" } }
-            $pasteBinding = if ($pasteId) { [PSCustomObject]@{ id = $pasteId; keys = "ctrl+shift+v" } } else { [PSCustomObject]@{ command = "paste"; keys = "ctrl+shift+v" } }
-
-            $null = $kbs.Add($copyBinding)
-            $null = $kbs.Add($pasteBinding)
-            $null = $kbs.Add([PSCustomObject]@{ command = "unbound"; keys = "ctrl+v" })
-            $null = $kbs.Add([PSCustomObject]@{ command = "unbound"; keys = "ctrl+c" })
-        } else {
-            $copyAction = $wt.actions | Where-Object { $_.command -eq "copy" -or ($_.command.action -eq "copy") }
-            if ($copyAction) {
-                $null = $kbs.Add([PSCustomObject]@{ id = $copyAction.id; keys = "ctrl+c" })
-            }
-            $pasteAction = $wt.actions | Where-Object { $_.command -eq "paste" }
-            if ($pasteAction) {
-                $null = $kbs.Add([PSCustomObject]@{ id = $pasteAction.id; keys = "ctrl+v" })
-            }
-        }
-        $wt.keybindings = $kbs
-        $json = $wt | ConvertTo-Json -Depth 20
-        [System.IO.File]::WriteAllText($wtPath, $json, [System.Text.Encoding]::UTF8)
-    } catch {
-        Write-Warn "Failed to update Windows Terminal settings.json: $_"
     }
 }
 
@@ -455,11 +481,17 @@ function Export-CurrentConfiguration {
     if ((Test-Path -LiteralPath $p1) -and ((Get-Content -LiteralPath $p1 -Raw) -match "# >>> (Sane Windows|Useful Setup) Developer Ergonomics >>>")) { $psShortcuts = $true }
     if ((Test-Path -LiteralPath $p2) -and ((Get-Content -LiteralPath $p2 -Raw) -match "# >>> (Sane Windows|Useful Setup) Developer Ergonomics >>>")) { $psShortcuts = $true }
 
-    $wtSettings = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
+    $wtSettingsPaths = Get-WindowsTerminalSettingsPaths
     $termDup = $false
-    if (Test-Path -LiteralPath $wtSettings) {
-        $rawWt = Get-Content -LiteralPath $wtSettings -Raw
-        if ($rawWt -match "duplicateTab") { $termDup = $true }
+    foreach ($wtSettings in $wtSettingsPaths) {
+        if (Test-Path -LiteralPath $wtSettings) {
+            $rawWt = Get-Content -LiteralPath $wtSettings -Raw
+            $cleanWt = Remove-JsonComments $rawWt
+            if ($cleanWt -match "duplicateTab") {
+                $termDup = $true
+                break
+            }
+        }
     }
     $isCtrlShiftCopyPaste = (Get-TerminalCopyPasteConfigured)
 
@@ -789,14 +821,21 @@ function Get-CurrentSystemState {
     }
 
     # Terminal Settings
-    $wtPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
-    if (Test-Path -LiteralPath $wtPath) {
-        try {
-            $wtRaw = Get-Content -LiteralPath $wtPath -Raw
-            $state.terminal["duplicateTabBound"] = ($wtRaw -match "duplicateTab")
-            $state.terminal["ctrlShiftCopyPaste"] = (Get-TerminalCopyPasteConfigured)
-        } catch { }
+    $wtSettingsPaths = Get-WindowsTerminalSettingsPaths
+    $state.terminal["duplicateTabBound"] = $false
+    foreach ($wtPath in $wtSettingsPaths) {
+        if (Test-Path -LiteralPath $wtPath) {
+            try {
+                $wtRaw = Get-Content -LiteralPath $wtPath -Raw
+                $cleanWt = Remove-JsonComments $wtRaw
+                if ($cleanWt -match "duplicateTab") {
+                    $state.terminal["duplicateTabBound"] = $true
+                    break
+                }
+            } catch { }
+        }
     }
+    $state.terminal["ctrlShiftCopyPaste"] = (Get-TerminalCopyPasteConfigured)
 
     # Power State
     $state.power = @{
@@ -1564,11 +1603,17 @@ if (Get-Module -ListAvailable -Name PSReadLine) {
 
 # Terminal Duplicate Tab (Ctrl+Shift+D in same CWD)
 if ($config['developer']['enable_terminal_duplicate_tab']) {
-    $wtPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
+    $wtSettingsPaths = Get-WindowsTerminalSettingsPaths
     $isConfigured = $false
-    if (Test-Path $wtPath) {
-        $raw = Get-Content $wtPath -Raw
-        if ($raw -match "duplicateTab") { $isConfigured = $true }
+    foreach ($wtPath in $wtSettingsPaths) {
+        if (Test-Path $wtPath) {
+            $raw = Get-Content $wtPath -Raw
+            $clean = Remove-JsonComments $raw
+            if ($clean -match "duplicateTab") {
+                $isConfigured = $true
+                break
+            }
+        }
     }
     if (-not $isConfigured) {
         Register-PlannedChange -Category "developer" -SettingName "terminal_duplicate_tab" -CurrentValue "Default" -DesiredValue "Ctrl+Shift+D in same CWD" -AffectsExplorer $false -Arguments @($ScriptDir) -Action {
