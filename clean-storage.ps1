@@ -213,6 +213,34 @@ function Collect-CleanupTargets {
         }
     }
 
+    # pnpm Cache
+    if (Test-CommandExists -CommandName "pnpm") {
+        $null = $targets.Add([PSCustomObject]@{
+            Id            = "pnpm-store-prune"
+            Name          = "pnpm Store Prune"
+            DisplayPath   = "pnpm store prune"
+            ActionType    = "Command"
+            ActionCommand = "pnpm store prune"
+            TargetPath    = ""
+            SizeBytes     = 0L
+            Impact        = "Unused packages from the global pnpm content-addressable store will be pruned."
+        })
+    }
+
+    # yarn Cache
+    if (Test-CommandExists -CommandName "yarn") {
+        $null = $targets.Add([PSCustomObject]@{
+            Id            = "yarn-cache-clean"
+            Name          = "Yarn Package Cache"
+            DisplayPath   = "yarn cache clean --all"
+            ActionType    = "Command"
+            ActionCommand = "yarn cache clean --all"
+            TargetPath    = ""
+            SizeBytes     = 0L
+            Impact        = "Cached yarn packages will be removed. Subsequent yarn installs will re-download archives."
+        })
+    }
+
     # uv Python Cache
     $uvCachePath = Join-Path $env:LOCALAPPDATA "uv\cache"
     if ((Test-CommandExists -CommandName "uv") -or (Test-Path -Path $uvCachePath)) {

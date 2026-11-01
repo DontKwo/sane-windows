@@ -8,7 +8,7 @@ Modular system configuration and disk maintenance for Windows 10 and 11.
 
 Sane Windows provides two snapshot-safe management tools:
 * **`setup.ps1` (`setup.bat`)**: Configures privacy, Explorer, performance, UI, developer ergonomics, and Windows Update settings defined in `config.yaml`. Takes an automatic snapshot before making modifications to allow immediate rollback.
-* **`clean-storage.ps1` (`clean-storage.bat`)**: Reclaims disk space by clearing temporary files, package caches (`uv`, `pip`, `npm`), compiler toolchains, application caches, crash dumps, and container runtimes with explicit confirmation prompts.
+* **`clean-storage.ps1` (`clean-storage.bat`)**: Reclaims disk space by clearing temporary files, package caches (`uv`, `pip`, `npm`, `pnpm`, `yarn`), compiler toolchains, application caches, crash dumps, and container runtimes with explicit confirmation prompts.
 
 ---
 
@@ -92,7 +92,7 @@ Scan and clean system caches and build artifacts:
 
 Cleaned targets include:
 * User temporary files (`%TEMP%`)
-* Package caches: `uv`, `pip`, `npm`, Cargo (`cargo`), Gradle, Go
+* Package caches: `uv`, `pip`, `npm`, `pnpm`, `yarn`, Cargo (`cargo`), Gradle, Go
 * Toolchains and models: Rust nightly (`rustup`), `rembg` ONNX models
 * Application caches and superseded builds: VS Code staged VSIX packages, Raspberry Pi Imager OS cache, superseded Claude Desktop and MathWorks ServiceHost installations, Claude project workflows
 * Windows Update: Downloaded installation payloads (requires admin)
