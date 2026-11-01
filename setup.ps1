@@ -35,6 +35,9 @@
 
 .PARAMETER ExportPath
     Output file path when exporting configuration with -ExportConfig.
+
+.PARAMETER Elevate
+    Requests UAC elevation if running without Administrator privileges.
 #>
 
 [CmdletBinding()]
@@ -48,7 +51,8 @@ param(
     [switch]$Yes,
     [switch]$WhatIf,
     [switch]$ExportConfig,
-    [string]$ExportPath
+    [string]$ExportPath,
+    [switch]$Elevate
 )
 
 $ErrorActionPreference = 'Stop'
@@ -143,6 +147,30 @@ function Test-IsAdmin {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+# Self-elevate to Administrator if requested and not elevated
+if ($Elevate -and -not (Test-IsAdmin)) {
+    $forwardArgs = @()
+    foreach ($boundKey in $PSBoundParameters.Keys) {
+        if ($boundKey -eq "Elevate") { continue }
+        $boundVal = $PSBoundParameters[$boundKey]
+        if ($boundVal -is [switch]) {
+            if ($boundVal.IsPresent) {
+                $forwardArgs += "-$boundKey"
+            }
+        } elseif ($boundVal -is [bool]) {
+            if ($boundVal) {
+                $forwardArgs += "-$boundKey"
+            }
+        } else {
+            $forwardArgs += "-$boundKey"
+            $forwardArgs += "$boundVal"
+        }
+    }
+    $fullArgList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"") + $forwardArgs
+    Start-Process powershell.exe -Verb RunAs -ArgumentList $fullArgList
+    exit 0
 }
 
 # --- Lightweight Pure-PowerShell YAML Parser ---

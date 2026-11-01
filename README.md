@@ -30,6 +30,10 @@ Edit preferences in `config.yaml`, then run:
   ```powershell
   .\setup.ps1 -Yes
   ```
+* **Request Administrator privileges (self-elevation via UAC):**
+  ```powershell
+  .\setup.ps1 -Elevate
+  ```
 * **Export current machine settings to YAML:**
   ```powershell
   .\setup.ps1 -ExportConfig [-ExportPath path\to\config.yaml]
