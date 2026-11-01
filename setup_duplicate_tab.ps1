@@ -18,6 +18,9 @@
 .PARAMETER Uninstall
     Removes the CWD tracker from PowerShell profiles and restores Windows Terminal settings.
 
+.PARAMETER Quiet
+    Suppresses informational console output.
+
 .EXAMPLE
     .\setup_duplicate_tab.ps1
     Installs and configures everything.

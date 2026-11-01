@@ -20,6 +20,21 @@
 
 .PARAMETER NoExplorerRestart
     Prevents restarting File Explorer after Explorer/Taskbar changes.
+
+.PARAMETER VerboseOutput
+    Displays unchanged settings alongside planned modifications.
+
+.PARAMETER Yes
+    Applies all planned changes without confirmation prompts.
+
+.PARAMETER WhatIf
+    Previews planned changes without modifying system settings.
+
+.PARAMETER ExportConfig
+    Exports current machine settings into a YAML configuration file.
+
+.PARAMETER ExportPath
+    Output file path when exporting configuration with -ExportConfig.
 #>
 
 [CmdletBinding()]

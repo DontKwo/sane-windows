@@ -28,8 +28,6 @@ privacy:
   # Disables background telemetry and customer experience scheduled tasks
   disable_telemetry_tasks: true
 
-
-
 # ------------------------------------------------------------------------------
 # 2. File Explorer & Navigation Sanity
 # ------------------------------------------------------------------------------
@@ -76,8 +74,6 @@ explorer:
   # Disables multi-monitor cursor sticky corners (allows smooth mouse transitions between displays)
   disable_mouse_sticky_corners: true
 
-
-
 # ------------------------------------------------------------------------------
 # 3. Startup Speed & System Performance
 # ------------------------------------------------------------------------------
@@ -93,8 +89,6 @@ performance:
 
   # Unlocks the hidden Windows "Ultimate Performance" power scheme
   unlock_ultimate_performance: true
-
-
 
 # ------------------------------------------------------------------------------
 # 4. UI Cleanliness & De-bloat
@@ -142,7 +136,6 @@ ui_debloat:
     - Disney.37853FC2267DE
     - SpotifyAB.SpotifyMusic
 
-
 # ------------------------------------------------------------------------------
 # 5. Developer & Terminal Ergonomics
 # ------------------------------------------------------------------------------
@@ -164,8 +157,6 @@ developer:
 
   # Requires Ctrl+Shift+C to copy and Ctrl+Shift+V to paste in Terminal & PowerShell
   require_ctrl_shift_copy_paste: true
-
-
 
 # ------------------------------------------------------------------------------
 # 6. Windows Update Control
