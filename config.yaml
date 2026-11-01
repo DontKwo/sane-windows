@@ -28,6 +28,9 @@ privacy:
   # Disables background telemetry and customer experience scheduled tasks
   disable_telemetry_tasks: true
 
+  # Disables Suggested Actions (clipboard tracking for numbers and dates)
+  disable_suggested_actions: true
+
 # ------------------------------------------------------------------------------
 # 2. File Explorer & Navigation Sanity
 # ------------------------------------------------------------------------------
@@ -111,6 +114,12 @@ ui_debloat:
 
   # Hides the Widgets / Weather button from the taskbar
   hide_taskbar_widgets: true
+
+  # Disables Widgets board from opening on hover
+  disable_widgets_hover: true
+
+  # Disables Recommended section in Start Menu (apps and files)
+  disable_start_recommendations: true
 
   # Silences tips, tricks, suggested content, and promotional notifications
   silence_tips_and_suggestions: true
