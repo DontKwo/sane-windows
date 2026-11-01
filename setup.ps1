@@ -1092,13 +1092,14 @@ if ($config['privacy']['disable_telemetry_tasks']) {
             @{ Path="\Microsoft\Windows\DiskDiagnostic\"; Name="Microsoft-Windows-DiskDiagnosticDataCollector" }
         )
         $allTasks = Get-ScheduledTask -ErrorAction SilentlyContinue
-        $activeTasks = @()
-        foreach ($t in $tasksToDisable) {
-            $taskObj = $allTasks | Where-Object { $_.TaskPath -eq $t.Path -and $_.TaskName -eq $t.Name }
-            if ($taskObj -and $taskObj.State -ne "Disabled") {
-                $activeTasks += $t
+        $activeTasks = @(
+            foreach ($t in $tasksToDisable) {
+                $taskObj = $allTasks | Where-Object { $_.TaskPath -eq $t.Path -and $_.TaskName -eq $t.Name }
+                if ($taskObj -and $taskObj.State -ne "Disabled") {
+                    $t
+                }
             }
-        }
+        )
         if ($activeTasks.Count -gt 0) {
             Register-PlannedChange -Category "privacy" -SettingName "disable_telemetry_tasks" -CurrentValue "$($activeTasks.Count) tasks active" -DesiredValue "Disable $($activeTasks.Count) tasks" -AffectsExplorer $false -Action {
                 $allActionTasks = Get-ScheduledTask -ErrorAction SilentlyContinue
