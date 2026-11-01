@@ -60,6 +60,15 @@ function Get-PathSize {
     return $total
 }
 
+function Test-IsAdmin {
+    [OutputType([bool])]
+    param()
+    # Checks whether the current PowerShell session has elevated privileges.
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
 function Test-CommandExists {
     [OutputType([bool])]
     param(
@@ -243,6 +252,78 @@ function Collect-CleanupTargets {
         }
     }
 
+    # Cargo Registry Cache
+    $cargoCachePath = Join-Path $env:USERPROFILE ".cargo\registry\cache"
+    if (Test-Path -Path $cargoCachePath) {
+        $size = Get-PathSize -Path $cargoCachePath
+        if ($size -gt 0) {
+            $null = $targets.Add([PSCustomObject]@{
+                Id            = "cargo-cache"
+                Name          = "Cargo Package Registry Cache"
+                DisplayPath   = $cargoCachePath
+                TargetPath    = $cargoCachePath
+                ActionType    = "DeletePath"
+                SizeBytes     = $size
+                Impact        = "Downloaded crates.io archives will be deleted. Future cargo builds will re-download packages from the network."
+            })
+        }
+    }
+
+    # Gradle Caches
+    $gradleCachePath = Join-Path $env:USERPROFILE ".gradle\caches"
+    if (Test-Path -Path $gradleCachePath) {
+        $size = Get-PathSize -Path $gradleCachePath
+        if ($size -gt 0) {
+            $null = $targets.Add([PSCustomObject]@{
+                Id            = "gradle-cache"
+                Name          = "Gradle Caches"
+                DisplayPath   = $gradleCachePath
+                TargetPath    = $gradleCachePath
+                ActionType    = "DeletePath"
+                SizeBytes     = $size
+                Impact        = "Cached Gradle dependencies and build artifacts will be deleted. Future Gradle builds will be slower and re-download dependencies."
+            })
+        }
+    }
+
+    # Go Build and Module Cache
+    if (Test-CommandExists -CommandName "go") {
+        $goCache = (go env GOCACHE 2>$null)
+        $goModCache = (go env GOMODCACHE 2>$null)
+        $size = 0L
+        if ($goCache -and (Test-Path -Path $goCache)) { $size += Get-PathSize -Path $goCache }
+        if ($goModCache -and (Test-Path -Path $goModCache)) { $size += Get-PathSize -Path $goModCache }
+
+        if ($size -gt 0) {
+            $null = $targets.Add([PSCustomObject]@{
+                Id            = "go-cache"
+                Name          = "Go Build and Module Cache"
+                DisplayPath   = "go clean -cache -modcache"
+                ActionType    = "Command"
+                ActionCommand = "go clean -cache -modcache"
+                TargetPath    = ""
+                SizeBytes     = $size
+                Impact        = "Go build artifacts and downloaded modules will be deleted. Next build will re-download modules and recompile."
+            })
+        }
+    } else {
+        $goModCacheFallback = Join-Path $env:USERPROFILE "go\pkg\mod\cache\download"
+        if (Test-Path -Path $goModCacheFallback) {
+            $size = Get-PathSize -Path $goModCacheFallback
+            if ($size -gt 0) {
+                $null = $targets.Add([PSCustomObject]@{
+                    Id            = "go-mod-cache"
+                    Name          = "Go Module Download Cache"
+                    DisplayPath   = $goModCacheFallback
+                    TargetPath    = $goModCacheFallback
+                    ActionType    = "DeletePath"
+                    SizeBytes     = $size
+                    Impact        = "Downloaded Go modules will be deleted. Next build will re-download modules."
+                })
+            }
+        }
+    }
+
     # Rust Nightly Toolchain
     if (Test-CommandExists -CommandName "rustup") {
         $toolchains = @(rustup toolchain list 2>$null)
@@ -423,6 +504,25 @@ function Collect-CleanupTargets {
             SizeBytes     = 0L
             Impact        = "All stopped containers, dangling images, unused networks, and build caches will be deleted permanently. Uncommitted container data is lost."
         })
+    }
+
+    # Windows Update Download Payload
+    if (Test-IsAdmin) {
+        $wuDownloadPath = Join-Path $env:SystemRoot "SoftwareDistribution\Download"
+        if (Test-Path -Path $wuDownloadPath) {
+            $size = Get-PathSize -Path $wuDownloadPath
+            if ($size -gt 0) {
+                $null = $targets.Add([PSCustomObject]@{
+                    Id            = "wu-download"
+                    Name          = "Windows Update Downloads"
+                    DisplayPath   = $wuDownloadPath
+                    TargetPath    = $wuDownloadPath
+                    ActionType    = "DeleteFiles"
+                    SizeBytes     = $size
+                    Impact        = "Downloaded Windows Update installation files will be deleted. Interrupted or pending updates will re-download necessary payloads."
+                })
+            }
+        }
     }
 
     # WSL2 Shutdown
