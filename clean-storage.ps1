@@ -14,13 +14,17 @@
 
 .PARAMETER Interactive
     Prompts for individual confirmation on each cleanup target.
+
+.PARAMETER MinAgeDays
+    Preserves files modified within the specified number of days (default 0 deletes all cleanable files).
 #>
 
 [CmdletBinding()]
 param(
     [switch]$WhatIf,
     [switch]$Yes,
-    [switch]$Interactive
+    [switch]$Interactive,
+    [int]$MinAgeDays = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -81,13 +85,18 @@ function Test-CommandExists {
 function Remove-FolderContentsSafely {
     [OutputType([long])]
     param(
-        [string]$DirectoryPath
+        [string]$DirectoryPath,
+        [int]$MinAgeDays = 0
     )
-    # Deletes directory items while skipping locked files.
+    # Deletes directory items while skipping locked or recent files.
     if (-not (Test-Path -Path $DirectoryPath)) { return 0L }
     $freed = 0L
+    $cutoff = if ($MinAgeDays -gt 0) { (Get-Date).AddDays(-$MinAgeDays) } else { $null }
     $items = Get-ChildItem -Path $DirectoryPath -Force -ErrorAction SilentlyContinue
     foreach ($item in $items) {
+        if ($cutoff -and $item.LastWriteTime -gt $cutoff) {
+            continue
+        }
         $itemSize = Get-PathSize -Path $item.FullName
         try {
             Remove-Item -Path $item.FullName -Recurse -Force -ErrorAction Stop
@@ -121,7 +130,8 @@ function Invoke-CleanupItem {
     [OutputType([long])]
     param(
         [PSCustomObject]$Target,
-        [bool]$ExecuteDryRun
+        [bool]$ExecuteDryRun,
+        [int]$MinAgeDays = 0
     )
     # Executes the specified cleanup operation or logs dry run preview.
     Write-Host "`nTarget: " -NoNewline -ForegroundColor Cyan
@@ -146,7 +156,7 @@ function Invoke-CleanupItem {
             return $initialSize
         }
         if ($Target.ActionType -eq "DeleteFiles") {
-            return (Remove-FolderContentsSafely -DirectoryPath $Target.TargetPath)
+            return (Remove-FolderContentsSafely -DirectoryPath $Target.TargetPath -MinAgeDays $MinAgeDays)
         }
         if ($Target.ActionType -eq "DeletePath") {
             if (Test-Path -Path $Target.TargetPath) {
@@ -574,7 +584,7 @@ function Main {
     if ($WhatIf) {
         Write-Host "Running in WhatIf (dry run) mode. Reviewing each item:" -ForegroundColor Magenta
         foreach ($t in $targets) {
-            $null = Invoke-CleanupItem -Target $t -ExecuteDryRun $true
+            $null = Invoke-CleanupItem -Target $t -ExecuteDryRun $true -MinAgeDays $MinAgeDays
         }
         Write-Host "`nDry run complete. No files were modified or deleted." -ForegroundColor Green
         return
@@ -643,7 +653,7 @@ function Main {
     Write-Host "`nExecuting cleanup on confirmed targets..." -ForegroundColor Cyan
     $totalReclaimed = 0L
     foreach ($t in $confirmedTargets) {
-        $freed = Invoke-CleanupItem -Target $t -ExecuteDryRun $false
+        $freed = Invoke-CleanupItem -Target $t -ExecuteDryRun $false -MinAgeDays $MinAgeDays
         $totalReclaimed += $freed
     }
 

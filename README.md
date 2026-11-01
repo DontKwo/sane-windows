@@ -74,6 +74,10 @@ Scan and clean system caches and build artifacts:
   ```powershell
   .\clean-storage.ps1 -Interactive
   ```
+* **Preserve recent files (e.g., modified within the last 7 days):**
+  ```powershell
+  .\clean-storage.ps1 -MinAgeDays 7
+  ```
 
 Cleaned targets include:
 * User temporary files (`%TEMP%`)
