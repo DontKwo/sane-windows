@@ -110,6 +110,7 @@ Cleaned targets include:
 * **`disable_activity_history`**: Disables Timeline and user activity tracking.
 * **`disable_feedback_prompts`**: Disables Windows feedback questionnaires.
 * **`disable_telemetry_tasks`**: Disables diagnostic scheduled tasks in Task Scheduler.
+* **`disable_suggested_actions`**: Disables Suggested Actions (clipboard tracking for dates/numbers).
 
 ### 2. File Explorer & Navigation
 * **`show_file_extensions`**: Always shows file extensions in File Explorer.
@@ -140,6 +141,8 @@ Cleaned targets include:
 * **`hide_taskbar_copilot_button`**: Hides Copilot button from taskbar.
 * **`hide_taskbar_task_view`**: Hides Task View button from taskbar.
 * **`hide_taskbar_widgets`**: Hides Widgets button from taskbar.
+* **`disable_widgets_hover`**: Disables Widgets board from opening on hover.
+* **`disable_start_recommendations`**: Disables Recommended section in Start Menu.
 * **`silence_tips_and_suggestions`**: Disables tips, suggestions, and promotional system notifications.
 * **`remove_bloatware_apps`**: Removes pre-installed promotional AppX packages.
 * **`bloatware_list`**: List of specific AppX package IDs targeted by `remove_bloatware_apps`.

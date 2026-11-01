@@ -253,7 +253,8 @@ function Test-ConfigFile {
             "disable_bing_search",
             "disable_activity_history",
             "disable_feedback_prompts",
-            "disable_telemetry_tasks"
+            "disable_telemetry_tasks",
+            "disable_suggested_actions"
         )
         explorer = @(
             "show_file_extensions",
@@ -284,6 +285,8 @@ function Test-ConfigFile {
             "hide_taskbar_copilot_button",
             "hide_taskbar_task_view",
             "hide_taskbar_widgets",
+            "disable_widgets_hover",
+            "disable_start_recommendations",
             "silence_tips_and_suggestions",
             "remove_bloatware_apps",
             "disable_sticky_keys_popup",
@@ -565,6 +568,8 @@ function Export-CurrentConfiguration {
     }
     $isTelemetryTasksDisabled = if ($appraiserTask) { $appraiserTask.State -eq "Disabled" } else { $false }
 
+    $isSuggestedActionsDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\SmartActionPlatform\SmartClipboard" -ValName "Disabled") -eq 1)
+
     # Explorer
     $showExt = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "HideFileExt") -eq 0)
     $showHidden = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "Hidden") -eq 1)
@@ -599,6 +604,8 @@ function Export-CurrentConfiguration {
     $hideCopilot = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "ShowCopilotButton") -eq 0)
     $hideTaskView = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "ShowTaskViewButton") -eq 0)
     $hideWidgets = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "TaskbarDa") -eq 0)
+    $disableWidgetsHover = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "TaskbarDa") -eq 0)
+    $disableStartRecs = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "Start_IrisRecommendations") -eq 0)
     $silenceTips = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -ValName "SubscribedContent-338388Enabled") -eq 0)
     
     $skFlags = Get-RegValSafe -KeyPath "HKCU:\Control Panel\Accessibility\StickyKeys" -ValName "Flags"
@@ -673,6 +680,9 @@ privacy:
 
   # Disables background telemetry and customer experience scheduled tasks
   disable_telemetry_tasks: $(To-YBool $isTelemetryTasksDisabled)
+
+  # Disables Suggested Actions (clipboard tracking for numbers and dates)
+  disable_suggested_actions: $(To-YBool $isSuggestedActionsDisabled)
 
 
 # ------------------------------------------------------------------------------
@@ -760,6 +770,12 @@ ui_debloat:
 
   # Hides the Widgets / Weather button from the taskbar
   hide_taskbar_widgets: $(To-YBool $hideWidgets)
+
+  # Disables Widgets board from opening on hover
+  disable_widgets_hover: $(To-YBool $disableWidgetsHover)
+
+  # Disables Recommended section in Start Menu (apps and files)
+  disable_start_recommendations: $(To-YBool $disableStartRecs)
 
   # Silences tips, tricks, suggested content, and promotional notifications
   silence_tips_and_suggestions: $(To-YBool $silenceTips)
@@ -850,6 +866,7 @@ function Get-RegistryTargets {
         @{ Section="privacy"; Key="activity_history_up"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"; Name="UploadUserActivities"; Type="DWord" },
         @{ Section="privacy"; Key="feedback_siuf"; Path="HKCU:\Software\Microsoft\Siuf\Rules"; Name="NumberOfSIUFInPeriod"; Type="DWord" },
         @{ Section="privacy"; Key="feedback_notif"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"; Name="DoNotShowFeedbackNotifications"; Type="DWord" },
+        @{ Section="privacy"; Key="suggested_actions"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\SmartActionPlatform\SmartClipboard"; Name="Disabled"; Type="DWord" },
 
         # Explorer
         @{ Section="explorer"; Key="hide_file_ext"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="HideFileExt"; Type="DWord" },
@@ -871,6 +888,8 @@ function Get-RegistryTargets {
         @{ Section="ui_debloat"; Key="copilot_button"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="ShowCopilotButton"; Type="DWord" },
         @{ Section="ui_debloat"; Key="task_view_button"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="ShowTaskViewButton"; Type="DWord" },
         @{ Section="ui_debloat"; Key="widgets_button"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="TaskbarDa"; Type="DWord" },
+        @{ Section="ui_debloat"; Key="widgets_hover"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="TaskbarDa"; Type="DWord" },
+        @{ Section="ui_debloat"; Key="start_recommendations"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="Start_IrisRecommendations"; Type="DWord" },
         @{ Section="ui_debloat"; Key="content_delivery_338388"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name="SubscribedContent-338388Enabled"; Type="DWord" },
         @{ Section="ui_debloat"; Key="content_delivery_338389"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name="SubscribedContent-338389Enabled"; Type="DWord" },
         @{ Section="ui_debloat"; Key="content_delivery_353694"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name="SubscribedContent-353694Enabled"; Type="DWord" },
@@ -1268,6 +1287,11 @@ if ($null -ne $config['privacy']['disable_feedback_prompts']) {
     Check-RegChange -Category "privacy" -SettingName "feedback_notifications" -RegPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -ValName "DoNotShowFeedbackNotifications" -DesiredValue $fbNotif
 }
 
+if ($null -ne $config['privacy']['disable_suggested_actions']) {
+    $suggestedVal = if ($config['privacy']['disable_suggested_actions']) { 1 } else { 0 }
+    Check-RegChange -Category "privacy" -SettingName "disable_suggested_actions" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\SmartActionPlatform\SmartClipboard" -ValName "Disabled" -DesiredValue $suggestedVal
+}
+
 if ($config['privacy']['disable_telemetry_tasks']) {
     if (-not $isAdmin) {
         if ($VerboseOutput) {
@@ -1539,6 +1563,24 @@ if ($null -ne $config['ui_debloat']['hide_taskbar_widgets']) {
     } else {
         $widgetsVal = if ($config['ui_debloat']['hide_taskbar_widgets']) { 0 } else { 1 }
         Check-RegChange -Category "ui_debloat" -SettingName "hide_widgets" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "TaskbarDa" -DesiredValue $widgetsVal
+    }
+}
+
+if ($null -ne $config['ui_debloat']['disable_widgets_hover']) {
+    if (-not $script:IsWindows11) {
+        Write-Skipped "ui_debloat.disable_widgets_hover" "Windows 11 widgets feature"
+    } else {
+        $widgetsHoverVal = if ($config['ui_debloat']['disable_widgets_hover']) { 0 } else { 1 }
+        Check-RegChange -Category "ui_debloat" -SettingName "disable_widgets_hover" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "TaskbarDa" -DesiredValue $widgetsHoverVal
+    }
+}
+
+if ($null -ne $config['ui_debloat']['disable_start_recommendations']) {
+    if (-not $script:IsWindows11) {
+        Write-Skipped "ui_debloat.disable_start_recommendations" "Windows 11 Start Menu feature"
+    } else {
+        $startRecsVal = if ($config['ui_debloat']['disable_start_recommendations']) { 0 } else { 1 }
+        Check-RegChange -Category "ui_debloat" -SettingName "disable_start_recommendations" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "Start_IrisRecommendations" -DesiredValue $startRecsVal
     }
 }
 
