@@ -1378,13 +1378,23 @@ if ($config['ui_debloat']['remove_bloatware_apps'] -and $config['ui_debloat']['b
         "Disney.37853FC2267DE",
         "SpotifyAB.SpotifyMusic"
     )
+
+    $allPackages = Get-AppxPackage -ErrorAction SilentlyContinue
+    $installedApps = @{}
+    if ($null -ne $allPackages) {
+        foreach ($pkg in $allPackages) {
+            if ($null -ne $pkg.Name) {
+                $installedApps[$pkg.Name] = $true
+            }
+        }
+    }
+
     foreach ($appPkg in $appsToRemove) {
         if ($appPkg -notin $allowedApps) {
             Write-Skipped "ui_debloat.remove_app" "$appPkg (not in allowlist)"
             continue
         }
-        $installed = Get-AppxPackage -Name $appPkg -ErrorAction SilentlyContinue
-        if ($installed) {
+        if ($installedApps.ContainsKey($appPkg)) {
             Register-PlannedChange -Category "ui_debloat" -SettingName "remove_app" -CurrentValue "$appPkg (installed)" -DesiredValue "Uninstall" -AffectsExplorer $false -Arguments @($appPkg) -Action {
                 param($pkg)
                 $target = Get-AppxPackage -Name $pkg -ErrorAction SilentlyContinue
