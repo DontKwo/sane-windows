@@ -22,6 +22,10 @@ Edit preferences in `config.yaml`, then run:
 ```
 *(Or double-click `setup.bat`)*
 
+* **Run with automatic UAC elevation:**
+  ```powershell
+  .\setup.ps1 -Elevate
+  ```
 * **Preview diffs (dry run):**
   ```powershell
   .\setup.ps1 -WhatIf

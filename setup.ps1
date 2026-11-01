@@ -35,6 +35,9 @@
 
 .PARAMETER ExportPath
     Output file path when exporting configuration with -ExportConfig.
+
+.PARAMETER Elevate
+    Automatically prompts for UAC elevation if the script is not running as Administrator.
 #>
 
 [CmdletBinding()]
@@ -48,7 +51,8 @@ param(
     [switch]$Yes,
     [switch]$WhatIf,
     [switch]$ExportConfig,
-    [string]$ExportPath
+    [string]$ExportPath,
+    [switch]$Elevate
 )
 
 $ErrorActionPreference = 'Stop'
@@ -143,6 +147,23 @@ function Test-IsAdmin {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+if ($Elevate -and -not (Test-IsAdmin)) {
+    Write-Host "Elevating privileges..." -ForegroundColor Cyan
+    $newArgs = @()
+    foreach ($key in $PSBoundParameters.Keys) {
+        if ($key -eq 'Elevate') { continue }
+        $val = $PSBoundParameters[$key]
+        if ($val -is [switch]) {
+            if ($val.IsPresent) { $newArgs += "-$key" }
+        } else {
+            $newArgs += "-$key"
+            $newArgs += "`"$val`""
+        }
+    }
+    Start-Process powershell.exe -Verb RunAs -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"") + $newArgs
+    exit 0
 }
 
 # --- Lightweight Pure-PowerShell YAML Parser ---
