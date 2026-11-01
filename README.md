@@ -85,6 +85,9 @@ Scan and clean system caches and build artifacts:
 * **Audit disk space and save JSON report to file:**
   ```powershell
   .\clean-storage.ps1 -ExportJson -ExportPath path\to\audit.json
+* **Preserve recent files (e.g., modified within the last 7 days):**
+  ```powershell
+  .\clean-storage.ps1 -MinAgeDays 7
   ```
 
 Cleaned targets include:
