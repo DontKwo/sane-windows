@@ -74,4 +74,56 @@ section:
         $result.section.listkey[0] | Should Be "val3"
         $result.section.listkey[1] | Should Be "val4"
     }
+
+    It "Parses inline comments after unquoted and quoted values" {
+        $yaml = @"
+section:
+  unquoted: value # unquoted comment
+  quoted: "value" # quoted comment
+"@
+        $result = ConvertFrom-SimpleYaml -YamlContent $yaml
+        $result.section.unquoted | Should Be "value"
+        $result.section.quoted | Should Be "value"
+    }
+
+    It "Parses empty values and null-coalescing" {
+        $yaml = @"
+section:
+  empty_key:
+"@
+        $result = ConvertFrom-SimpleYaml -YamlContent $yaml
+        $result.section.empty_key -is [System.Collections.Generic.List[object]] | Should Be $true
+    }
+
+    It "Parses quoted values containing colons" {
+        $yaml = @"
+section:
+  url: "https://example.com"
+"@
+        $result = ConvertFrom-SimpleYaml -YamlContent $yaml
+        $result.section.url | Should Be "https://example.com"
+    }
+
+    It "Parses nested lists under parent keys with varied indentation levels" {
+        $yaml = @"
+section:
+  parent:
+    - nested1
+    - nested2
+"@
+        $result = ConvertFrom-SimpleYaml -YamlContent $yaml
+        $result.section.parent[0] | Should Be "nested1"
+        $result.section.parent[1] | Should Be "nested2"
+    }
+
+    It "Parses boolean strings vs booleans" {
+        $yaml = @"
+section:
+  bool_string: "true"
+  bool_val: true
+"@
+        $result = ConvertFrom-SimpleYaml -YamlContent $yaml
+        $result.section.bool_string | Should Be "true"
+        $result.section.bool_val | Should Be $true
+    }
 }
