@@ -74,4 +74,54 @@ section:
         $result.section.listkey[0] | Should -Be "val3"
         $result.section.listkey[1] | Should -Be "val4"
     }
+
+    It "Parses inline comments on unquoted lines" {
+        $yaml = @"
+section:
+  key: value # test comment
+"@
+        $result = ConvertFrom-SimpleYaml -YamlContent $yaml
+        $result.section.key | Should -Be "value"
+    }
+
+    It "Preserves comments inside quoted strings" {
+        $yaml = @"
+section:
+  key: "val # keep"
+"@
+        $result = ConvertFrom-SimpleYaml -YamlContent $yaml
+        $result.section.key | Should -Be "val # keep"
+    }
+
+    It "Parses empty values as empty list or null object" {
+        $yaml = @"
+section:
+  empty_key:
+"@
+        $result = ConvertFrom-SimpleYaml -YamlContent $yaml
+        $val = $result.section.empty_key
+        ($null -eq $val -or ($val -is [System.Collections.IList] -and $val.Count -eq 0)) | Should -Be $true
+    }
+
+    It "Parses quoted values with colons" {
+        $yaml = @"
+section:
+  url: "https://example.com"
+"@
+        $result = ConvertFrom-SimpleYaml -YamlContent $yaml
+        $result.section.url | Should -Be "https://example.com"
+    }
+
+    It "Distinguishes boolean strings vs literals" {
+        $yaml = @"
+section:
+  bool_str: "true"
+  bool_lit: true
+"@
+        $result = ConvertFrom-SimpleYaml -YamlContent $yaml
+        $result.section.bool_str | Should -Be "true"
+        $result.section.bool_str | Should -BeOfType [string]
+        $result.section.bool_lit | Should -Be $true
+        $result.section.bool_lit | Should -BeOfType [bool]
+    }
 }
