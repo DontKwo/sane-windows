@@ -14,13 +14,21 @@
 
 .PARAMETER Interactive
     Prompts for individual confirmation on each cleanup target.
+
+.PARAMETER ExportJson
+    Exports cleanup targets and storage metrics to JSON without deleting.
+
+.PARAMETER ExportPath
+    File path to save the JSON audit report.
 #>
 
 [CmdletBinding()]
 param(
     [switch]$WhatIf,
     [switch]$Yes,
-    [switch]$Interactive
+    [switch]$Interactive,
+    [switch]$ExportJson,
+    [string]$ExportPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -546,12 +554,49 @@ function Main {
     [OutputType([void])]
     param()
     # Main orchestrator for storage analysis and interactive deletion.
-    Write-Host "`n=================================================================" -ForegroundColor Cyan
-    Write-Host " Sane Windows: Storage & Cache Cleanup" -ForegroundColor Cyan
-    Write-Host "=================================================================`n" -ForegroundColor Cyan
+    if (-not $ExportJson) {
+        Write-Host "`n=================================================================" -ForegroundColor Cyan
+        Write-Host " Sane Windows: Storage & Cache Cleanup" -ForegroundColor Cyan
+        Write-Host "=================================================================`n" -ForegroundColor Cyan
+    }
 
     $driveBefore = Get-PSDrive -Name C -ErrorAction SilentlyContinue
     $targets = Collect-CleanupTargets
+
+    if ($ExportJson) {
+        $totalBytes = 0L
+        $targetList = [System.Collections.ArrayList]@()
+        foreach ($t in $targets) {
+            if ($t.SizeBytes -gt 0) { $totalBytes += $t.SizeBytes }
+            $null = $targetList.Add([PSCustomObject]@{
+                Id          = $t.Id
+                Name        = $t.Name
+                DisplayPath = $t.DisplayPath
+                ActionType  = $t.ActionType
+                SizeBytes   = $t.SizeBytes
+            })
+        }
+
+        $hostName = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { [System.Environment]::MachineName }
+        $report = [ordered]@{
+            Timestamp             = (Get-Date).ToString("o")
+            ComputerName          = $hostName
+            TotalReclaimableBytes = $totalBytes
+            FormattedTotalSize    = (Format-ByteSize -Bytes $totalBytes)
+            Targets               = @($targetList)
+        }
+        $json = $report | ConvertTo-Json -Depth 5
+        if (-not [string]::IsNullOrWhiteSpace($ExportPath)) {
+            $dir = Split-Path -Parent $ExportPath
+            if ($dir -and -not (Test-Path -Path $dir)) {
+                $null = New-Item -ItemType Directory -Path $dir -Force
+            }
+            [System.IO.File]::WriteAllText($ExportPath, $json, [System.Text.Encoding]::UTF8)
+        } else {
+            Write-Output $json
+        }
+        return
+    }
 
     if ($targets.Count -eq 0) {
         Write-Host "No cleanable targets found. Storage is clean." -ForegroundColor Green

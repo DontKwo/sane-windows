@@ -78,6 +78,14 @@ Scan and clean system caches and build artifacts:
   ```powershell
   .\clean-storage.ps1 -Interactive
   ```
+* **Audit disk space and output JSON report:**
+  ```powershell
+  .\clean-storage.ps1 -ExportJson
+  ```
+* **Audit disk space and save JSON report to file:**
+  ```powershell
+  .\clean-storage.ps1 -ExportJson -ExportPath path\to\audit.json
+  ```
 
 Cleaned targets include:
 * User temporary files (`%TEMP%`)
