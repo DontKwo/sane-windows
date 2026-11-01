@@ -169,7 +169,13 @@ function ConvertFrom-SimpleYaml {
 
         # List item: "  - value"
         if ($line -match '^\s+-\s+(.+)$') {
-            $val = $matches[1].Trim().Trim('"').Trim("'")
+            $rawItem = $matches[1].Trim()
+            if (($rawItem.StartsWith('"') -and $rawItem.EndsWith('"') -and $rawItem.Length -ge 2) -or
+                ($rawItem.StartsWith("'") -and $rawItem.EndsWith("'") -and $rawItem.Length -ge 2)) {
+                $val = $rawItem.Substring(1, $rawItem.Length - 2)
+            } else {
+                $val = ($rawItem -replace '\s+#.*$', '').Trim()
+            }
             if ($currentSection -and $currentListKey) {
                 $root[$currentSection][$currentListKey].Add($val)
             }
@@ -182,16 +188,24 @@ function ConvertFrom-SimpleYaml {
             $valStr = $matches[2].Trim()
             $currentListKey = $null
 
-            if ($valStr -eq '') {
-                $currentListKey = $key
-                $root[$currentSection][$key] = [System.Collections.Generic.List[object]]::new()
+            # Preserve inner content if quoted, else strip inline comments and trim
+            if (($valStr.StartsWith('"') -and $valStr.EndsWith('"') -and $valStr.Length -ge 2) -or
+                ($valStr.StartsWith("'") -and $valStr.EndsWith("'") -and $valStr.Length -ge 2)) {
+                $root[$currentSection][$key] = $valStr.Substring(1, $valStr.Length - 2)
             } else {
-                $val = $valStr
-                if ($valStr -ieq 'true') { $val = $true }
-                elseif ($valStr -ieq 'false') { $val = $false }
-                elseif ($valStr -match '^-?\d+$') { $val = [int]$valStr }
-                else { $val = $valStr.Trim('"').Trim("'") }
-                $root[$currentSection][$key] = $val
+                $valStr = ($valStr -replace '\s+#.*$', '').Trim()
+                if ($valStr -eq '') {
+                    $currentListKey = $key
+                    $root[$currentSection][$key] = [System.Collections.Generic.List[object]]::new()
+                } elseif ($valStr -ieq 'true') {
+                    $root[$currentSection][$key] = $true
+                } elseif ($valStr -ieq 'false') {
+                    $root[$currentSection][$key] = $false
+                } elseif ($valStr -match '^-?\d+$') {
+                    $root[$currentSection][$key] = [int]$valStr
+                } else {
+                    $root[$currentSection][$key] = $valStr
+                }
             }
             continue
         }
