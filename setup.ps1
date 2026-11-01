@@ -199,6 +199,100 @@ function ConvertFrom-SimpleYaml {
     return $root
 }
 
+# Validates config sections and setting keys against allowed options.
+function Test-ConfigFile {
+    [OutputType([bool])]
+    param([hashtable]$Config)
+
+    $schema = @{
+        privacy = @(
+            "disable_telemetry",
+            "disable_advertising_id",
+            "disable_bing_search",
+            "disable_activity_history",
+            "disable_feedback_prompts",
+            "disable_telemetry_tasks"
+        )
+        explorer = @(
+            "show_file_extensions",
+            "show_hidden_files",
+            "launch_to_this_pc",
+            "classic_context_menu",
+            "show_full_path_in_title",
+            "show_seconds_in_clock",
+            "add_open_with_code",
+            "add_open_in_terminal",
+            "enable_taskbar_end_task",
+            "disable_search_highlights",
+            "disable_store_app_prompt",
+            "disable_lock_screen_ads",
+            "disable_snap_assist_popups",
+            "disable_mouse_sticky_corners"
+        )
+        performance = @(
+            "disable_startup_delay",
+            "disable_edge_background_tasks",
+            "disable_fast_startup",
+            "unlock_ultimate_performance"
+        )
+        ui_debloat = @(
+            "enable_dark_mode",
+            "left_align_taskbar",
+            "disable_aero_shake",
+            "hide_taskbar_copilot_button",
+            "hide_taskbar_task_view",
+            "hide_taskbar_widgets",
+            "silence_tips_and_suggestions",
+            "remove_bloatware_apps",
+            "disable_sticky_keys_popup",
+            "bloatware_list"
+        )
+        developer = @(
+            "enable_developer_mode",
+            "enable_long_paths",
+            "configure_git_autocrlf",
+            "enable_powershell_shortcuts",
+            "enable_terminal_duplicate_tab",
+            "require_ctrl_shift_copy_paste"
+        )
+        windows_update = @(
+            "no_auto_restart_logged_on",
+            "exclude_drivers"
+        )
+    }
+
+    $valid = $true
+    if ($null -eq $Config) {
+        return $true
+    }
+
+    foreach ($section in $Config.Keys) {
+        if (-not $schema.ContainsKey($section)) {
+            $valid = $false
+            if ($Config[$section] -is [hashtable] -and $Config[$section].Keys.Count -gt 0) {
+                foreach ($key in $Config[$section].Keys) {
+                    Write-Warn "Unrecognized setting in config.yaml: [$section] -> $key"
+                }
+            } else {
+                Write-Warn "Unrecognized setting in config.yaml: [$section] -> *"
+            }
+            continue
+        }
+
+        $allowedKeys = $schema[$section]
+        if ($Config[$section] -is [hashtable]) {
+            foreach ($key in $Config[$section].Keys) {
+                if ($allowedKeys -notcontains $key) {
+                    $valid = $false
+                    Write-Warn "Unrecognized setting in config.yaml: [$section] -> $key"
+                }
+            }
+        }
+    }
+
+    return $valid
+}
+
 # --- Safe Registry Access ---
 function Get-RegValSafe {
     param([string]$KeyPath, [string]$ValName)
@@ -1029,6 +1123,7 @@ if (-not (Test-Path $ConfigPath)) {
 Write-Info "Loading configuration from: $ConfigPath"
 $configContent = Get-Content $ConfigPath -Raw
 $config = ConvertFrom-SimpleYaml $configContent
+[void](Test-ConfigFile -Config $config)
 
 $isAdmin = Test-IsAdmin
 if (-not $isAdmin) {
