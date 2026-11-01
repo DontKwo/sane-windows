@@ -5,3 +5,8 @@ snapshots/*.json
 # Exported configs
 config.exported.yaml
 
+
+# Temporary debugging scripts
+test_*.ps1
+patch.*
+*.tmp
