@@ -65,6 +65,40 @@ Describe "clean-storage" {
         }
     }
 
+    Context "Remove-FolderContentsSafely with -MinAgeDays" {
+        It "Preserves newer files and deletes older files when MinAgeDays is set" {
+            $testDir = Join-Path $TestDrive "minage-test"
+            New-Item -ItemType Directory -Path $testDir -Force | Out-Null
+
+            # Create older and newer test files
+            $oldFile = New-Item -ItemType File -Path (Join-Path $testDir "old.txt") -Force
+            $newFile = New-Item -ItemType File -Path (Join-Path $testDir "new.txt") -Force
+            $oldFile.LastWriteTime = (Get-Date).AddDays(-10)
+            $newFile.LastWriteTime = (Get-Date).AddDays(-1)
+
+            Remove-FolderContentsSafely -DirectoryPath $testDir -MinAgeDays 5 | Out-Null
+
+            Test-Path $oldFile.FullName | Should -Be $false
+            Test-Path $newFile.FullName | Should -Be $true
+        }
+
+        It "Deletes all files when MinAgeDays is 0" {
+            $testDir = Join-Path $TestDrive "minage-test-zero"
+            New-Item -ItemType Directory -Path $testDir -Force | Out-Null
+
+            # Create test files
+            $file1 = New-Item -ItemType File -Path (Join-Path $testDir "file1.txt") -Force
+            $file2 = New-Item -ItemType File -Path (Join-Path $testDir "file2.txt") -Force
+            $file1.LastWriteTime = (Get-Date).AddDays(-10)
+            $file2.LastWriteTime = (Get-Date).AddDays(-1)
+
+            Remove-FolderContentsSafely -DirectoryPath $testDir -MinAgeDays 0 | Out-Null
+
+            Test-Path $file1.FullName | Should -Be $false
+            Test-Path $file2.FullName | Should -Be $false
+        }
+    }
+
     Context "Collect-CleanupTargets" {
         BeforeEach {
             # Isolate environment variables to $TestDrive and mock Test-IsAdmin.
