@@ -17,7 +17,7 @@ section:
   key: value
 "@
         $result = ConvertFrom-SimpleYaml -YamlContent $yaml
-        $result.section.key | Should Be "value"
+        $result.section.key | Should -Be "value"
     }
 
     It "Parses simple YAML list" {
@@ -28,8 +28,8 @@ section:
     - value2
 "@
         $result = ConvertFrom-SimpleYaml -YamlContent $yaml
-        $result.section.listkey[0] | Should Be "value1"
-        $result.section.listkey[1] | Should Be "value2"
+        $result.section.listkey[0] | Should -Be "value1"
+        $result.section.listkey[1] | Should -Be "value2"
     }
 
     It "Parses simple YAML booleans and integers" {
@@ -41,10 +41,10 @@ section:
   neg_int_val: -12
 "@
         $result = ConvertFrom-SimpleYaml -YamlContent $yaml
-        $result.section.true_val | Should Be $true
-        $result.section.false_val | Should Be $false
-        $result.section.int_val | Should Be 42
-        $result.section.neg_int_val | Should Be -12
+        $result.section.true_val | Should -Be $true
+        $result.section.false_val | Should -Be $false
+        $result.section.int_val | Should -Be 42
+        $result.section.neg_int_val | Should -Be -12
     }
 
     It "Ignores comments and empty lines" {
@@ -56,7 +56,7 @@ section:
   # another comment
 "@
         $result = ConvertFrom-SimpleYaml -YamlContent $yaml
-        $result.section.key | Should Be "value"
+        $result.section.key | Should -Be "value"
     }
 
     It "Strips quotes from values" {
@@ -69,9 +69,9 @@ section:
     - 'val4'
 "@
         $result = ConvertFrom-SimpleYaml -YamlContent $yaml
-        $result.section.key1 | Should Be "value1"
-        $result.section.key2 | Should Be "value2"
-        $result.section.listkey[0] | Should Be "val3"
-        $result.section.listkey[1] | Should Be "val4"
+        $result.section.key1 | Should -Be "value1"
+        $result.section.key2 | Should -Be "value2"
+        $result.section.listkey[0] | Should -Be "val3"
+        $result.section.listkey[1] | Should -Be "val4"
     }
 }
