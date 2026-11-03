@@ -232,6 +232,22 @@ function Collect-CleanupTargets {
                 })
             }
         }
+
+        $doPath = Join-Path $env:SystemRoot "SoftwareDistribution\DeliveryOptimization"
+        if (Test-Path -Path $doPath) {
+            $size = Get-PathSize -Path $doPath
+            if ($size -gt 0) {
+                $null = $targets.Add([PSCustomObject]@{
+                    Id            = "delivery-optimization"
+                    Name          = "Windows Delivery Optimization Cache"
+                    DisplayPath   = $doPath
+                    TargetPath    = $doPath
+                    ActionType    = "DeleteFiles"
+                    SizeBytes     = $size
+                    Impact        = "Delivery Optimization cache will be cleared (requires admin). Future peer-to-peer update sharing will need to re-download files."
+                })
+            }
+        }
     }
 
     # Edge Cache
