@@ -112,6 +112,7 @@ Cleaned targets include:
 * **`disable_feedback_prompts`**: Disables Windows feedback questionnaires.
 * **`disable_telemetry_tasks`**: Disables diagnostic scheduled tasks in Task Scheduler.
 * **`disable_suggested_actions`**: Disables Suggested Actions (clipboard tracking for dates/numbers).
+* **`disable_diagtrack_service`**: Disables Connected User Experiences and Telemetry (DiagTrack) service.
 
 ### 2. File Explorer & Navigation
 * **`show_file_extensions`**: Always shows file extensions in File Explorer.

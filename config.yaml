@@ -31,6 +31,9 @@ privacy:
   # Disables Suggested Actions (clipboard tracking for numbers and dates)
   disable_suggested_actions: true
 
+  # Disables Connected User Experiences and Telemetry (DiagTrack) service
+  disable_diagtrack_service: true
+
 # ------------------------------------------------------------------------------
 # 2. File Explorer & Navigation Sanity
 # ------------------------------------------------------------------------------
