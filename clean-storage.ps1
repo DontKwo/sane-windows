@@ -213,6 +213,69 @@ function Collect-CleanupTargets {
         }
     }
 
+    # Chrome Cache
+    $chromeCache = Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data\Default\Cache"
+    if (Test-Path -Path $chromeCache) {
+        if (Get-Process -Name chrome -ErrorAction SilentlyContinue) {
+            Write-Warning "Chrome is currently running. Skipping Chrome cache cleanup."
+        } else {
+            $size = Get-PathSize -Path $chromeCache
+            if ($size -gt 0) {
+                $null = $targets.Add([PSCustomObject]@{
+                    Id            = "chrome-cache"
+                    Name          = "Google Chrome Cache"
+                    DisplayPath   = $chromeCache
+                    TargetPath    = $chromeCache
+                    ActionType    = "DeleteFiles"
+                    SizeBytes     = $size
+                    Impact        = "Browser cache will be deleted. Websites may take slightly longer to load initially."
+                })
+            }
+        }
+    }
+
+    # Edge Cache
+    $edgeCache = Join-Path $env:LOCALAPPDATA "Microsoft\Edge\User Data\Default\Cache"
+    if (Test-Path -Path $edgeCache) {
+        if (Get-Process -Name msedge -ErrorAction SilentlyContinue) {
+            Write-Warning "Edge is currently running. Skipping Edge cache cleanup."
+        } else {
+            $size = Get-PathSize -Path $edgeCache
+            if ($size -gt 0) {
+                $null = $targets.Add([PSCustomObject]@{
+                    Id            = "edge-cache"
+                    Name          = "Microsoft Edge Cache"
+                    DisplayPath   = $edgeCache
+                    TargetPath    = $edgeCache
+                    ActionType    = "DeleteFiles"
+                    SizeBytes     = $size
+                    Impact        = "Browser cache will be deleted. Websites may take slightly longer to load initially."
+                })
+            }
+        }
+    }
+
+    # Firefox Cache
+    $firefoxCache = Join-Path $env:LOCALAPPDATA "Mozilla\Firefox\Profiles"
+    if (Test-Path -Path $firefoxCache) {
+        if (Get-Process -Name firefox -ErrorAction SilentlyContinue) {
+            Write-Warning "Firefox is currently running. Skipping Firefox cache cleanup."
+        } else {
+            $size = Get-PathSize -Path $firefoxCache
+            if ($size -gt 0) {
+                $null = $targets.Add([PSCustomObject]@{
+                    Id            = "firefox-cache"
+                    Name          = "Mozilla Firefox Cache"
+                    DisplayPath   = $firefoxCache
+                    TargetPath    = $firefoxCache
+                    ActionType    = "DeleteFiles"
+                    SizeBytes     = $size
+                    Impact        = "Browser cache will be deleted. Websites may take slightly longer to load initially."
+                })
+            }
+        }
+    }
+
     # pnpm Cache
     if (Test-CommandExists -CommandName "pnpm") {
         $null = $targets.Add([PSCustomObject]@{
