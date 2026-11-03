@@ -293,6 +293,7 @@ function Test-ConfigFile {
             "bloatware_list"
         )
         developer = @(
+            "defender_dev_exclusions",
             "enable_developer_mode",
             "enable_long_paths",
             "configure_git_autocrlf",
@@ -1671,6 +1672,32 @@ if ($null -ne $config['ui_debloat']['disable_sticky_keys_popup']) {
 # 5. Developer & Terminal Ergonomics
 # -------------------------------------------------------------
 Write-Step "Inspecting Developer & Terminal Ergonomics..."
+
+if ($config['developer']['defender_dev_exclusions']) {
+    if (-not $isAdmin) {
+        Write-Skipped "developer.defender_dev_exclusions" "Requires Administrator elevation"
+    } else {
+        $exclusions = $config['developer']['defender_dev_exclusions']
+        $currentExclusions = @()
+        try {
+            $mpPref = Get-MpPreference -ErrorAction SilentlyContinue
+            if ($mpPref -and $mpPref.ExclusionProcess) {
+                $currentExclusions = $mpPref.ExclusionProcess
+            }
+        } catch { }
+
+        foreach ($proc in $exclusions) {
+            if ($proc -notin $currentExclusions) {
+                Register-PlannedChange -Category "developer" -SettingName "defender_dev_exclusions" -CurrentValue "Not excluded" -DesiredValue "Exclude $proc" -AffectsExplorer $false -Arguments @($proc) -Action {
+                    param($p)
+                    Add-MpPreference -ExclusionProcess $p -ErrorAction SilentlyContinue
+                }
+            } else {
+                Write-Unchanged "developer.defender_dev_exclusions" "$proc (already excluded)"
+            }
+        }
+    }
+}
 
 if ($null -ne $config['developer']['enable_developer_mode']) {
     $devVal = if ($config['developer']['enable_developer_mode']) { 1 } else { 0 }
