@@ -167,6 +167,9 @@ developer:
   # Requires Ctrl+Shift+C to copy and Ctrl+Shift+V to paste in Terminal & PowerShell
   require_ctrl_shift_copy_paste: true
 
+  # Excludes developer directories (node_modules, .venv, etc.) from Windows Search index
+  exclude_dev_folders_from_search: true
+
 # ------------------------------------------------------------------------------
 # 6. Windows Update Control
 # ------------------------------------------------------------------------------

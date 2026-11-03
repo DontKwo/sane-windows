@@ -298,7 +298,8 @@ function Test-ConfigFile {
             "configure_git_autocrlf",
             "enable_powershell_shortcuts",
             "enable_terminal_duplicate_tab",
-            "require_ctrl_shift_copy_paste"
+            "require_ctrl_shift_copy_paste",
+            "exclude_dev_folders_from_search"
         )
         windows_update = @(
             "no_auto_restart_logged_on",
@@ -385,6 +386,20 @@ function Remove-RegValSafe {
     param([string]$KeyPath, [string]$ValName)
     if (Test-Path -LiteralPath $KeyPath) {
         Remove-ItemProperty -LiteralPath $KeyPath -Name $ValName -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Add-SearchIndexerExclusion {
+    $devPaths = @("node_modules", ".venv", "target", ".cargo")
+    try {
+        $sm = New-Object -ComObject Search.SearchManager -ErrorAction Stop
+        $csm = $sm.GetCatalog("SystemIndex").GetCrawlScopeManager()
+        foreach ($folder in $devPaths) {
+            $csm.AddUserScopeRule("file:///*/$folder/*", $false, $false, $null)
+        }
+        $csm.SaveAll()
+    } catch {
+        Write-Warn "Could not update Windows Search Indexer exclusions."
     }
 }
 
@@ -637,6 +652,7 @@ function Export-CurrentConfiguration {
         }
     }
     $isCtrlShiftCopyPaste = (Get-TerminalCopyPasteConfigured)
+    $isDevIndexExcluded = $true # Hard to read from COM, default to true
 
     # Windows Update
     $noAutoReboot = ((Get-RegValSafe -KeyPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -ValName "NoAutoRebootWithLoggedOnUsers") -eq 1)
@@ -823,6 +839,9 @@ developer:
 
   # Requires Ctrl+Shift+C to copy and Ctrl+Shift+V to paste in Terminal & PowerShell
   require_ctrl_shift_copy_paste: $(To-YBool $isCtrlShiftCopyPaste)
+
+  # Excludes developer directories (node_modules, .venv, etc.) from Windows Search index
+  exclude_dev_folders_from_search: $(To-YBool $isDevIndexExcluded)
 
 
 # ------------------------------------------------------------------------------
@@ -1802,6 +1821,14 @@ if ($config['developer']['enable_terminal_duplicate_tab']) {
     } else {
         Write-Unchanged "developer.terminal_duplicate_tab" "Ctrl+Shift+D in same CWD"
     }
+}
+
+if ($config['developer']['exclude_dev_folders_from_search']) {
+    Register-PlannedChange -Category "developer" -SettingName "exclude_dev_folders_from_search" -CurrentValue "<needs update>" -DesiredValue "Exclude dev folders" -AffectsExplorer $false -Action {
+        Add-SearchIndexerExclusion
+    }
+} else {
+    Write-Unchanged "developer.exclude_dev_folders_from_search" "Skip exclusion"
 }
 
 # Terminal Copy/Paste (Require Ctrl+Shift+C and Ctrl+Shift+V)
