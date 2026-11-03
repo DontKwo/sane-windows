@@ -46,6 +46,12 @@ Edit preferences in `config.yaml`, then run:
   ```powershell
   .\setup.ps1 -ListSnapshots
   ```
+* **Compare two snapshots:**
+  ```powershell
+  # Requires dot-sourcing or loading the function from setup.ps1
+  . .\setup.ps1
+  Compare-SystemSnapshots -SnapshotA snapshots\old.json -SnapshotB snapshots\new.json
+  ```
 * **Additional flags:**
   * `-ConfigPath <path>`: Load a custom YAML configuration.
   * `-NoExplorerRestart`: Skip restarting File Explorer after Explorer/Taskbar tweaks.
