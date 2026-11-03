@@ -102,6 +102,17 @@ Cleaned targets include:
 
 ---
 
+### 3. Tooling Diagnostics
+
+Diagnose installed developer CLIs and versions:
+```powershell
+.\check-tooling.ps1
+```
+
+Supported CLIs include: `git`, `uv`, `python`, `pnpm`, `npm`, `cargo`, `docker`, and `wsl`.
+
+---
+
 ## Configuration Reference (`config.yaml`)
 
 ### 1. Privacy & Anti-Telemetry
