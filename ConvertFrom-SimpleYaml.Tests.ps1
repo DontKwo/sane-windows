@@ -124,4 +124,25 @@ section:
         $result.section.bool_lit | Should -Be $true
         $result.section.bool_lit | Should -BeOfType [bool]
     }
+
+    It "Parses empty list literal []" {
+        $yaml = @"
+section:
+  empty_literal: []
+"@
+        $result = ConvertFrom-SimpleYaml -YamlContent $yaml
+        $val = $result.section.empty_literal
+        ($null -ne $val -and $val -is [System.Collections.IList] -and $val.Count -eq 0) | Should -Be $true
+    }
+
+    It "Parses all boolean values yes and no" {
+        $yaml = @"
+section:
+  bool_yes: yes
+  bool_no: no
+"@
+        $result = ConvertFrom-SimpleYaml -YamlContent $yaml
+        $result.section.bool_yes | Should -Be $true
+        $result.section.bool_no | Should -Be $false
+    }
 }
