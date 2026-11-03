@@ -44,9 +44,6 @@ explorer:
   # Open File Explorer directly to "This PC" instead of "Home / Quick Access"
   launch_to_this_pc: true
 
-  # Windows 11: Restores classic Windows 10 right-click context menu (no "Show more options")
-  classic_context_menu: true
-
   # Displays the full file system path in Explorer title bars
   show_full_path_in_title: true
 
@@ -99,6 +96,9 @@ performance:
 ui_debloat:
   # System-wide dark mode for Windows OS and apps
   enable_dark_mode: true
+
+  # Windows 11: Restores classic Windows 10 right-click context menu (no "Show more options")
+  classic_context_menu: true
 
   # Windows 11: Reverts the centered taskbar back to the classic left-aligned position
   left_align_taskbar: false

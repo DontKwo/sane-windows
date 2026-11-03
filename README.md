@@ -117,7 +117,6 @@ Cleaned targets include:
 * **`show_file_extensions`**: Always shows file extensions in File Explorer.
 * **`show_hidden_files`**: Always shows hidden files and folders.
 * **`launch_to_this_pc`**: Opens File Explorer to "This PC" instead of "Home".
-* **`classic_context_menu`**: Windows 11: Restores Windows 10 right-click menu without "Show more options".
 * **`show_full_path_in_title`**: Displays full directory path in Explorer title bars.
 * **`show_seconds_in_clock`**: Displays seconds in taskbar system clock.
 * **`add_open_with_code`**: Adds "Open with Code" context menu entries for folders, files, and drives.
@@ -137,6 +136,7 @@ Cleaned targets include:
 
 ### 4. UI Cleanliness & De-bloat
 * **`enable_dark_mode`**: Applies system-wide dark mode to Windows and applications.
+* **`classic_context_menu`**: Windows 11: Restores Windows 10 right-click menu without "Show more options".
 * **`left_align_taskbar`**: Windows 11: Moves taskbar icons from center to left.
 * **`disable_aero_shake`**: Disables title bar shake minimizing other windows.
 * **`hide_taskbar_copilot_button`**: Hides Copilot button from taskbar.
