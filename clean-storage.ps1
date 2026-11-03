@@ -370,6 +370,40 @@ function Collect-CleanupTargets {
         }
     }
 
+    # Visual Studio Installer Cache
+    $vsCachePath = Join-Path $env:ProgramData "Microsoft\VisualStudio\Packages"
+    if (Test-Path -Path $vsCachePath) {
+        $size = Get-PathSize -Path $vsCachePath
+        if ($size -gt 0) {
+            $null = $targets.Add([PSCustomObject]@{
+                Id            = "vs-installer-cache"
+                Name          = "Visual Studio Installer Cache"
+                DisplayPath   = $vsCachePath
+                TargetPath    = $vsCachePath
+                ActionType    = "DeletePath"
+                SizeBytes     = $size
+                Impact        = "Visual Studio setup packages will be removed. Subsequent installer runs will re-download necessary payloads."
+            })
+        }
+    }
+
+    # MSBuild Cache
+    $msbuildCachePath = Join-Path $env:LOCALAPPDATA "Microsoft\MSBuild"
+    if (Test-Path -Path $msbuildCachePath) {
+        $size = Get-PathSize -Path $msbuildCachePath
+        if ($size -gt 0) {
+            $null = $targets.Add([PSCustomObject]@{
+                Id            = "msbuild-cache"
+                Name          = "MSBuild Temporary Cache"
+                DisplayPath   = $msbuildCachePath
+                TargetPath    = $msbuildCachePath
+                ActionType    = "DeletePath"
+                SizeBytes     = $size
+                Impact        = "MSBuild temporary cache and setup packages will be removed. Subsequent builds will regenerate cached data."
+            })
+        }
+    }
+
     # Rust Nightly Toolchain
     if (Test-CommandExists -CommandName "rustup") {
         $toolchains = @(rustup toolchain list 2>$null)
