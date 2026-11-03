@@ -183,6 +183,13 @@ function Invoke-CleanupItem {
             }
             return $freedTotal
         }
+        if ($Target.ActionType -eq "DeleteMultipleFiles") {
+            $freedTotal = 0L
+            foreach ($subPath in $Target.TargetPaths) {
+                $freedTotal += (Remove-FolderContentsSafely -DirectoryPath $subPath -MinAgeDays $MinAgeDays)
+            }
+            return $freedTotal
+        }
     } catch {
         Write-Host "  [ERROR] $($_.Exception.Message)" -ForegroundColor Red
         return 0L
@@ -404,6 +411,27 @@ function Collect-CleanupTargets {
                 SizeBytes     = $size
                 Impact        = "Cached operating system disk images will be deleted. Flashing the same OS again will require a fresh download."
             })
+        }
+    }
+
+    # JetBrains IDE Caches and Logs
+    $jetbrainsDir = Join-Path $env:LOCALAPPDATA "JetBrains"
+    if (Test-Path -Path $jetbrainsDir) {
+        $jbPaths = @(Get-ChildItem -Path $jetbrainsDir -Directory -Recurse -Include "caches", "log" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+        if ($jbPaths.Count -gt 0) {
+            $totalSize = 0L
+            foreach ($p in $jbPaths) { $totalSize += Get-PathSize -Path $p }
+            if ($totalSize -gt 0) {
+                $null = $targets.Add([PSCustomObject]@{
+                    Id            = "jetbrains-caches"
+                    Name          = "JetBrains IDE Caches and Logs"
+                    DisplayPath   = ($jbPaths -join "; ")
+                    TargetPaths   = $jbPaths
+                    ActionType    = "DeleteMultipleFiles"
+                    SizeBytes     = $totalSize
+                    Impact        = "JetBrains IDE caches and log files will be deleted. IDEs may re-index projects on next startup. Active lock files are skipped."
+                })
+            }
         }
     }
 

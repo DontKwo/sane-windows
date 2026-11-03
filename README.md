@@ -94,7 +94,7 @@ Cleaned targets include:
 * User temporary files (`%TEMP%`)
 * Package caches: `uv`, `pip`, `npm`, `pnpm`, `yarn`, Cargo (`cargo`), Gradle, Go
 * Toolchains and models: Rust nightly (`rustup`), `rembg` ONNX models
-* Application caches and superseded builds: VS Code staged VSIX packages, Raspberry Pi Imager OS cache, superseded Claude Desktop and MathWorks ServiceHost installations, Claude project workflows
+* Application caches and superseded builds: JetBrains IDE caches and logs, VS Code staged VSIX packages, Raspberry Pi Imager OS cache, superseded Claude Desktop and MathWorks ServiceHost installations, Claude project workflows
 * Windows Update: Downloaded installation payloads (requires admin)
 * Diagnostic data: Windows error crash dumps (`.dmp`), Autodesk CER reports
 * Container and VM runtimes: Docker prune (`docker system prune -a --volumes -f`), WSL2 VM shutdown (`wsl --shutdown`)
