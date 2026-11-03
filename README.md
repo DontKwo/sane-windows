@@ -92,6 +92,7 @@ Scan and clean system caches and build artifacts:
 
 Cleaned targets include:
 * User temporary files (`%TEMP%`)
+* Windows system caches: Thumbnail cache, Icon cache
 * Browser caches: Chrome, Edge, Firefox
 * Package caches: `uv`, `pip`, `npm`, `pnpm`, `yarn`, Cargo (`cargo`), Gradle, Go
 * Toolchains and models: Rust nightly (`rustup`), Visual Studio Installer, MSBuild, `rembg` ONNX models

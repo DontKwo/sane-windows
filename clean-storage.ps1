@@ -196,6 +196,48 @@ function Collect-CleanupTargets {
     # Scans and assembles candidate cleanup operations.
     $targets = [System.Collections.ArrayList]@()
 
+    # Windows Thumbnail Cache
+    $thumbCacheDir = Join-Path $env:LOCALAPPDATA "Microsoft\Windows\Explorer"
+    if (Test-Path -Path $thumbCacheDir) {
+        $thumbFiles = @(Get-ChildItem -Path $thumbCacheDir -Filter "thumbcache_*.db" -File -ErrorAction SilentlyContinue)
+        if ($thumbFiles.Count -gt 0) {
+            $totalSize = 0L
+            $thumbPaths = [System.Collections.ArrayList]@()
+            foreach ($f in $thumbFiles) {
+                $totalSize += $f.Length
+                $null = $thumbPaths.Add($f.FullName)
+            }
+            if ($totalSize -gt 0) {
+                $null = $targets.Add([PSCustomObject]@{
+                    Id            = "thumb-cache"
+                    Name          = "Windows Thumbnail Cache"
+                    DisplayPath   = Join-Path $thumbCacheDir "thumbcache_*.db"
+                    TargetPaths   = $thumbPaths
+                    ActionType    = "DeleteMultiple"
+                    SizeBytes     = $totalSize
+                    Impact        = "Thumbnail cache files will be deleted. Windows will regenerate thumbnails as folders are opened, which may initially slow down folder viewing."
+                })
+            }
+        }
+    }
+
+    # Windows Icon Cache
+    $iconCache = Join-Path $env:LOCALAPPDATA "IconCache.db"
+    if (Test-Path -Path $iconCache) {
+        $size = Get-PathSize -Path $iconCache
+        if ($size -gt 0) {
+            $null = $targets.Add([PSCustomObject]@{
+                Id            = "icon-cache"
+                Name          = "Windows Icon Cache"
+                DisplayPath   = $iconCache
+                TargetPath    = $iconCache
+                ActionType    = "DeletePath"
+                SizeBytes     = $size
+                Impact        = "The system icon cache will be deleted. Windows will rebuild it automatically, fixing potential corrupted shortcut icons."
+            })
+        }
+    }
+
     # User Temp
     $userTemp = $env:TEMP
     if (Test-Path -Path $userTemp) {
