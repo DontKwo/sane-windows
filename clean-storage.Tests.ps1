@@ -165,6 +165,35 @@ Describe "clean-storage JSON Export" {
         $paramNames | Should -Contain "ExportPath"
     }
 
+    It "Validates JSON schema against schema requirements" {
+        $global:ExportJson = $true
+        $global:ExportPath = ""
+
+        function global:Collect-CleanupTargets {
+            return @(
+                [PSCustomObject]@{
+                    Id          = "schema-test"
+                    Name        = "Schema Test Target"
+                    ActionType  = "Command"
+                    SizeBytes   = 1024L
+                }
+            )
+        }
+
+        $rawJson = Main
+        $parsed = $rawJson | ConvertFrom-Json
+
+        $parsed.PSObject.Properties.Name | Should -Contain "Timestamp"
+        $parsed.PSObject.Properties.Name | Should -Contain "Targets"
+        $parsed.PSObject.Properties.Name | Should -Contain "TotalReclaimableBytes"
+
+        foreach ($target in $parsed.Targets) {
+            $target.PSObject.Properties.Name | Should -Contain "Id"
+            $target.PSObject.Properties.Name | Should -Contain "Name"
+            $target.PSObject.Properties.Name | Should -Contain "ActionType"
+        }
+    }
+
     It "Exports machine-readable JSON to stdout when -ExportJson is specified" {
         $global:ExportJson = $true
         $global:ExportPath = ""
