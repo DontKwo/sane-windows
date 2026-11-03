@@ -177,3 +177,9 @@ windows_update:
   # Excludes third-party driver updates from routine Windows Updates (prevents GPU driver overwrites)
   exclude_drivers: true
 
+# ------------------------------------------------------------------------------
+# 7. Network Configuration
+# ------------------------------------------------------------------------------
+network:
+  # Encrypted DNS (DoH) configuration ('cloudflare' | 'quad9' | 'off')
+  secure_dns_provider: 'cloudflare'
