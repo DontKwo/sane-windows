@@ -98,6 +98,7 @@ Cleaned targets include:
 * Application caches and superseded builds: VS Code staged VSIX packages, Raspberry Pi Imager OS cache, superseded Claude Desktop and MathWorks ServiceHost installations, Claude project workflows
 * Windows Update download cache: Downloaded installation payloads (requires admin)
 * Diagnostic data: Windows error crash dumps (`.dmp`), Autodesk CER reports
+* System caches: Windows Font Cache (`C:\Windows\ServiceProfiles\LocalService\AppData\Local\FontCache`)
 * Container and VM runtimes: Docker prune (`docker system prune -a --volumes -f`), WSL2 VM shutdown (`wsl --shutdown`)
 
 ---

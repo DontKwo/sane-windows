@@ -649,6 +649,25 @@ function Collect-CleanupTargets {
         })
     }
 
+    # Windows Font Cache
+    if (Test-IsAdmin) {
+        $fontCachePath = Join-Path $env:SystemRoot "ServiceProfiles\LocalService\AppData\Local\FontCache"
+        if (Test-Path -Path $fontCachePath) {
+            $size = Get-PathSize -Path $fontCachePath
+            if ($size -gt 0) {
+                $null = $targets.Add([PSCustomObject]@{
+                    Id            = "font-cache"
+                    Name          = "Windows Font Cache"
+                    DisplayPath   = $fontCachePath
+                    TargetPath    = $fontCachePath
+                    ActionType    = "DeleteFiles"
+                    SizeBytes     = $size
+                    Impact        = "Font cache files will be deleted (requires admin). Rebuilt automatically on next boot, potentially slowing initial text rendering slightly."
+                })
+            }
+        }
+    }
+
     # Windows Update Download Payload
     if (Test-IsAdmin) {
         $wuDownloadPath = Join-Path $env:SystemRoot "SoftwareDistribution\Download"
