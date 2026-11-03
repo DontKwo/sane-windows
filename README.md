@@ -134,6 +134,7 @@ Cleaned targets include:
 * **`disable_edge_background_tasks`**: Stops Microsoft Edge from pre-launching background processes.
 * **`disable_fast_startup`**: Disables Fast Startup to prevent kernel state carryover across reboots.
 * **`unlock_ultimate_performance`**: Unlocks the "Ultimate Performance" power plan.
+* **`enable_game_mode`**: Enables Windows Game Mode to prioritize system resources for games.
 
 ### 4. UI Cleanliness & De-bloat
 * **`enable_dark_mode`**: Applies system-wide dark mode to Windows and applications.

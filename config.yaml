@@ -93,6 +93,9 @@ performance:
   # Unlocks the hidden Windows "Ultimate Performance" power scheme
   unlock_ultimate_performance: true
 
+  # Enables Windows Game Mode to prioritize resources for games
+  enable_game_mode: true
+
 # ------------------------------------------------------------------------------
 # 4. UI Cleanliness & De-bloat
 # ------------------------------------------------------------------------------

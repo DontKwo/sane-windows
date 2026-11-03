@@ -276,7 +276,8 @@ function Test-ConfigFile {
             "disable_startup_delay",
             "disable_edge_background_tasks",
             "disable_fast_startup",
-            "unlock_ultimate_performance"
+            "unlock_ultimate_performance",
+            "enable_game_mode"
         )
         ui_debloat = @(
             "enable_dark_mode",
@@ -595,6 +596,7 @@ function Export-CurrentConfiguration {
     $disableEdge = ($edge1 -eq 0)
     $disableFastStart = ((Get-RegValSafe -KeyPath "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" -ValName "HiberbootEnabled") -eq 0)
     $isUltimateUnlocked = (Test-UltimatePerformanceUnlocked)
+    $isGameModeEnabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\GameBar" -ValName "AllowAutoGameMode") -eq 1)
 
     # UI Debloat
     $isDarkMode = ((Get-RegValSafe -KeyPath "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" -ValName "AppsUseLightTheme") -eq 0 -and (Get-RegValSafe -KeyPath "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" -ValName "SystemUsesLightTheme") -eq 0)
@@ -748,6 +750,9 @@ performance:
   # Unlocks the hidden Windows "Ultimate Performance" power scheme
   unlock_ultimate_performance: $(To-YBool $isUltimateUnlocked)
 
+  # Enables Windows Game Mode to prioritize resources for games
+  enable_game_mode: $(To-YBool $isGameModeEnabled)
+
 
 # ------------------------------------------------------------------------------
 # 4. UI Cleanliness & De-bloat
@@ -879,6 +884,7 @@ function Get-RegistryTargets {
         @{ Section="performance"; Key="edge_startup_boost"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Edge"; Name="StartupBoostEnabled"; Type="DWord" },
         @{ Section="performance"; Key="edge_background_mode"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Edge"; Name="BackgroundModeEnabled"; Type="DWord" },
         @{ Section="performance"; Key="fast_startup"; Path="HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power"; Name="HiberbootEnabled"; Type="DWord" },
+        @{ Section="performance"; Key="game_mode"; Path="HKCU:\Software\Microsoft\GameBar"; Name="AllowAutoGameMode"; Type="DWord" },
 
         # UI Debloat
         @{ Section="ui_debloat"; Key="dark_mode_apps"; Path="HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize"; Name="AppsUseLightTheme"; Type="DWord" },
@@ -1516,6 +1522,11 @@ if ($config['performance']['unlock_ultimate_performance']) {
     } else {
         Write-Unchanged "performance.unlock_ultimate_performance" "Unlocked"
     }
+}
+
+if ($null -ne $config['performance']['enable_game_mode']) {
+    $gameModeVal = if ($config['performance']['enable_game_mode']) { 1 } else { 0 }
+    Check-RegChange -Category "performance" -SettingName "game_mode" -RegPath "HKCU:\Software\Microsoft\GameBar" -ValName "AllowAutoGameMode" -DesiredValue $gameModeVal
 }
 
 # -------------------------------------------------------------
