@@ -565,7 +565,7 @@ function Collect-CleanupTargets {
                     TargetPath    = $wuDownloadPath
                     ActionType    = "DeleteFiles"
                     SizeBytes     = $size
-                    Impact        = "Downloaded Windows Update installation files will be deleted. Interrupted or pending updates will re-download necessary payloads."
+                    Impact        = "Downloaded Windows Update installation files will be deleted (requires admin). Interrupted or pending updates will re-download necessary payloads."
                 })
             }
         }
