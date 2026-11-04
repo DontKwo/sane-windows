@@ -278,7 +278,8 @@ function Test-ConfigFile {
             "disable_startup_delay",
             "disable_edge_background_tasks",
             "disable_fast_startup",
-            "unlock_ultimate_performance"
+            "unlock_ultimate_performance",
+            "enable_hardware_gpu_scheduling"
         )
         ui_debloat = @(
             "enable_dark_mode",
@@ -644,6 +645,7 @@ function Export-CurrentConfiguration {
     $disableEdge = ($edge1 -eq 0)
     $disableFastStart = ((Get-RegValSafe -KeyPath "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" -ValName "HiberbootEnabled") -eq 0)
     $isUltimateUnlocked = (Test-UltimatePerformanceUnlocked)
+    $isHwGpuEnabled = ((Get-RegValSafe -KeyPath "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -ValName "HwSchMode") -eq 2)
 
     # UI Debloat
     $isDarkMode = ((Get-RegValSafe -KeyPath "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" -ValName "AppsUseLightTheme") -eq 0 -and (Get-RegValSafe -KeyPath "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" -ValName "SystemUsesLightTheme") -eq 0)
@@ -806,6 +808,9 @@ performance:
   # Unlocks the hidden Windows "Ultimate Performance" power scheme
   unlock_ultimate_performance: $(To-YBool $isUltimateUnlocked)
 
+  # Enables Hardware Accelerated GPU Scheduling
+  enable_hardware_gpu_scheduling: $(To-YBool $isHwGpuEnabled)
+
 
 # ------------------------------------------------------------------------------
 # 4. UI Cleanliness & De-bloat
@@ -963,6 +968,7 @@ function Get-RegistryTargets {
         @{ Section="performance"; Key="edge_startup_boost"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Edge"; Name="StartupBoostEnabled"; Type="DWord" },
         @{ Section="performance"; Key="edge_background_mode"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Edge"; Name="BackgroundModeEnabled"; Type="DWord" },
         @{ Section="performance"; Key="fast_startup"; Path="HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power"; Name="HiberbootEnabled"; Type="DWord" },
+        @{ Section="performance"; Key="enable_hardware_gpu_scheduling"; Path="HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers"; Name="HwSchMode"; Type="DWord" },
 
         # UI Debloat
         @{ Section="ui_debloat"; Key="dark_mode_apps"; Path="HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize"; Name="AppsUseLightTheme"; Type="DWord" },
@@ -1591,6 +1597,11 @@ if ($config['performance']['unlock_ultimate_performance']) {
     } else {
         Write-Unchanged "performance.unlock_ultimate_performance" "Unlocked"
     }
+}
+
+if ($null -ne $config['performance']['enable_hardware_gpu_scheduling']) {
+    $hwSchVal = if ($config['performance']['enable_hardware_gpu_scheduling']) { 2 } else { 1 }
+    Check-RegChange -Category "performance" -SettingName "enable_hardware_gpu_scheduling" -RegPath "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -ValName "HwSchMode" -DesiredValue $hwSchVal
 }
 
 # -------------------------------------------------------------

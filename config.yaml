@@ -90,6 +90,9 @@ performance:
   # Unlocks the hidden Windows "Ultimate Performance" power scheme
   unlock_ultimate_performance: true
 
+  # Enables Hardware Accelerated GPU Scheduling
+  enable_hardware_gpu_scheduling: true
+
 # ------------------------------------------------------------------------------
 # 4. UI Cleanliness & De-bloat
 # ------------------------------------------------------------------------------

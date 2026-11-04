@@ -151,6 +151,7 @@ Supported CLIs include: `git`, `uv`, `python`, `pnpm`, `npm`, `cargo`, `docker`,
 * **`disable_edge_background_tasks`**: Stops Microsoft Edge from pre-launching background processes.
 * **`disable_fast_startup`**: Disables Fast Startup to prevent kernel state carryover across reboots.
 * **`unlock_ultimate_performance`**: Unlocks the "Ultimate Performance" power plan.
+* **`enable_hardware_gpu_scheduling`**: Enables Hardware Accelerated GPU Scheduling.
 
 ### 4. UI Cleanliness & De-bloat
 * **`enable_dark_mode`**: Applies system-wide dark mode to Windows and applications.
