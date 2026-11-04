@@ -166,6 +166,15 @@ function Invoke-CleanupItem {
         if ($Target.ActionType -eq "DeleteFiles") {
             return (Remove-FolderContentsSafely -DirectoryPath $Target.TargetPath -MinAgeDays $MinAgeDays)
         }
+        if ($Target.ActionType -eq "DeleteMultipleFiles") {
+            $freedTotal = 0L
+            foreach ($subPath in $Target.TargetPaths) {
+                if (Test-Path -Path $subPath) {
+                    $freedTotal += (Remove-FolderContentsSafely -DirectoryPath $subPath -MinAgeDays $MinAgeDays)
+                }
+            }
+            return $freedTotal
+        }
         if ($Target.ActionType -eq "DeletePath") {
             if (Test-Path -Path $Target.TargetPath) {
                 Remove-Item -Path $Target.TargetPath -Recurse -Force -ErrorAction Stop
@@ -522,18 +531,23 @@ function Collect-CleanupTargets {
     }
 
     # Windows Crash Dumps
-    $crashDumps = Join-Path $env:LOCALAPPDATA "CrashDumps"
-    if (Test-Path -Path $crashDumps) {
-        $size = Get-PathSize -Path $crashDumps
+    $crashDumps = @(
+        (Join-Path $env:LOCALAPPDATA "CrashDumps"),
+        "C:\Windows\Minidump"
+    )
+    $validCrashDumps = $crashDumps | Where-Object { Test-Path -Path $_ }
+    if ($validCrashDumps.Count -gt 0) {
+        $size = 0L
+        foreach ($p in $validCrashDumps) { $size += Get-PathSize -Path $p }
         if ($size -gt 0) {
             $null = $targets.Add([PSCustomObject]@{
                 Id            = "crash-dumps"
-                Name          = "Windows Application Crash Dumps"
-                DisplayPath   = $crashDumps
-                TargetPath    = $crashDumps
-                ActionType    = "DeleteFiles"
+                Name          = "Windows Crash Dumps"
+                DisplayPath   = ($validCrashDumps -join ", ")
+                TargetPaths   = $validCrashDumps
+                ActionType    = "DeleteMultipleFiles"
                 SizeBytes     = $size
-                Impact        = "Post-mortem memory dump files (.dmp) will be deleted. Past application crash state records cannot be recovered."
+                Impact        = "Post-mortem memory dump files (.dmp) will be deleted. Past application and system crash state records cannot be recovered."
             })
         }
     }
