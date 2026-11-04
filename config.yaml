@@ -149,6 +149,9 @@ ui_debloat:
 # 5. Developer & Terminal Ergonomics
 # ------------------------------------------------------------------------------
 developer:
+  # Excludes developer tools from Defender scanning (improves performance)
+  defender_dev_exclusions: ['git.exe', 'cargo.exe', 'python.exe', 'uv.exe']
+
   # Enables Windows Developer Mode (sideloading and advanced dev features)
   enable_developer_mode: false
 
