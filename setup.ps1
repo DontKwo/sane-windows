@@ -225,9 +225,11 @@ function ConvertFrom-SimpleYaml {
                 if ($valStr -eq '') {
                     $currentListKey = $key
                     $root[$currentSection][$key] = [System.Collections.Generic.List[object]]::new()
-                } elseif ($valStr -ieq 'true') {
+                } elseif ($valStr -eq '[]') {
+                    $root[$currentSection][$key] = [System.Collections.Generic.List[object]]::new()
+                } elseif ($valStr -ieq 'true' -or $valStr -ieq 'yes') {
                     $root[$currentSection][$key] = $true
-                } elseif ($valStr -ieq 'false') {
+                } elseif ($valStr -ieq 'false' -or $valStr -ieq 'no') {
                     $root[$currentSection][$key] = $false
                 } elseif ($valStr -match '^-?\d+$') {
                     $root[$currentSection][$key] = [int]$valStr
