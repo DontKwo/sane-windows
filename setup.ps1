@@ -922,6 +922,19 @@ if (-not (Test-Path $SnapshotsDir)) {
     $null = New-Item -ItemType Directory -Path $SnapshotsDir -Force
 }
 
+function Compare-SystemSnapshots {
+    param([string]$SnapshotA, [string]$SnapshotB)
+    $a = Get-Content $SnapshotA -Raw | ConvertFrom-Json
+    $b = Get-Content $SnapshotB -Raw | ConvertFrom-Json
+    $keys = @($a.registry.PSObject.Properties.Name; $b.registry.PSObject.Properties.Name) | Select-Object -Unique | Sort-Object
+    foreach ($k in $keys) {
+        $vA = $a.registry.$k; $vB = $b.registry.$k
+        if ($vA.Existed -and -not $vB.Existed) { Write-Host "[REMOVED] $k (was $($vA.Value))" -ForegroundColor Red }
+        elseif (-not $vA.Existed -and $vB.Existed) { Write-Host "[ADDED] $k (is $($vB.Value))" -ForegroundColor Green }
+        elseif ($vA.Existed -and $vB.Existed -and $vA.Value -ne $vB.Value) { Write-Host "[CHANGED] $k ($($vA.Value) -> $($vB.Value))" -ForegroundColor Yellow }
+    }
+}
+
 function Get-RegistryTargets {
     return @(
         # Privacy
