@@ -257,7 +257,8 @@ function Test-ConfigFile {
             "disable_activity_history",
             "disable_feedback_prompts",
             "disable_telemetry_tasks",
-            "disable_suggested_actions"
+            "disable_suggested_actions",
+            "disable_diagtrack_service"
         )
         explorer = @(
             "show_file_extensions",
@@ -620,6 +621,9 @@ function Export-CurrentConfiguration {
 
     $isSuggestedActionsDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\SmartActionPlatform\SmartClipboard" -ValName "Disabled") -eq 1)
 
+    $diagTrackState = Get-RegValSafe -KeyPath "HKLM:\SYSTEM\CurrentControlSet\Services\DiagTrack" -ValName "Start"
+    $isDiagTrackDisabled = ($diagTrackState -eq 4)
+
     # Explorer
     $showExt = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "HideFileExt") -eq 0)
     $showHidden = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "Hidden") -eq 1)
@@ -746,6 +750,9 @@ privacy:
 
   # Disables Suggested Actions (clipboard tracking for numbers and dates)
   disable_suggested_actions: $(To-YBool $isSuggestedActionsDisabled)
+
+  # Disables Connected User Experiences and Telemetry (DiagTrack) service
+  disable_diagtrack_service: $(To-YBool $isDiagTrackDisabled)
 
 
 # ------------------------------------------------------------------------------
@@ -956,6 +963,7 @@ function Get-RegistryTargets {
         @{ Section="privacy"; Key="feedback_siuf"; Path="HKCU:\Software\Microsoft\Siuf\Rules"; Name="NumberOfSIUFInPeriod"; Type="DWord" },
         @{ Section="privacy"; Key="feedback_notif"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"; Name="DoNotShowFeedbackNotifications"; Type="DWord" },
         @{ Section="privacy"; Key="suggested_actions"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\SmartActionPlatform\SmartClipboard"; Name="Disabled"; Type="DWord" },
+        @{ Section="privacy"; Key="diagtrack_service"; Path="HKLM:\SYSTEM\CurrentControlSet\Services\DiagTrack"; Name="Start"; Type="DWord" },
 
         # Explorer
         @{ Section="explorer"; Key="hide_file_ext"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="HideFileExt"; Type="DWord" },
@@ -1403,6 +1411,12 @@ if ($null -ne $config['privacy']['disable_feedback_prompts']) {
 if ($null -ne $config['privacy']['disable_suggested_actions']) {
     $suggestedVal = if ($config['privacy']['disable_suggested_actions']) { 1 } else { 0 }
     Check-RegChange -Category "privacy" -SettingName "disable_suggested_actions" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\SmartActionPlatform\SmartClipboard" -ValName "Disabled" -DesiredValue $suggestedVal
+}
+
+if ($null -ne $config['privacy']['disable_diagtrack_service']) {
+    # 4 = Disabled, 2 = Automatic
+    $diagTrackVal = if ($config['privacy']['disable_diagtrack_service']) { 4 } else { 2 }
+    Check-RegChange -Category "privacy" -SettingName "disable_diagtrack_service" -RegPath "HKLM:\SYSTEM\CurrentControlSet\Services\DiagTrack" -ValName "Start" -DesiredValue $diagTrackVal
 }
 
 if ($config['privacy']['disable_telemetry_tasks']) {
