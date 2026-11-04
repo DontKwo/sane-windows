@@ -52,7 +52,8 @@ param(
     [switch]$WhatIf,
     [switch]$ExportConfig,
     [string]$ExportPath,
-    [switch]$Elevate
+    [switch]$Elevate,
+    [switch]$CreateRestorePoint
 )
 
 $ErrorActionPreference = 'Stop'
@@ -1002,6 +1003,28 @@ function Get-CurrentSystemState {
     return $state
 }
 
+function New-SystemRestorePointSafely {
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+
+    $reg = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore" -Name "DisableSR" -ErrorAction SilentlyContinue
+
+    if ($null -ne $reg -and $reg.DisableSR -eq 1) {
+        Write-Warn "System Restore is disabled on C:. Skipping restore point."
+        return
+    }
+
+    if ($PSCmdlet.ShouldProcess("Computer", "Create System Restore Point")) {
+        try {
+            Checkpoint-Computer -Description 'SaneWindows Pre-Setup' -RestorePointType 'MODIFY_SETTINGS' -ErrorAction Stop
+            Write-Success "System restore point created successfully."
+        } catch {
+            Write-Warn "Failed to create system restore point: $_"
+        }
+    }
+}
+
+
 function Save-Snapshot {
     param($State)
     $ts = (Get-Date).ToString("yyyyMMdd_HHmmss")
@@ -1916,6 +1939,10 @@ Write-Host "`n[+] Applying changes..." -ForegroundColor Cyan
 $initialState = Get-CurrentSystemState
 $snapshotFile = Save-Snapshot -State $initialState
 Write-Success "Saved pre-change snapshot to: $snapshotFile"
+
+if ($CreateRestorePoint) {
+    New-SystemRestorePointSafely
+}
 
 $explorerNeedsRestart = $false
 $appliedCount = 0
