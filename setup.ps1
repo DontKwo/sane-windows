@@ -307,6 +307,9 @@ function Test-ConfigFile {
             "no_auto_restart_logged_on",
             "exclude_drivers"
         )
+        network = @(
+            "secure_dns_provider"
+        )
     }
 
     $valid = $true
@@ -413,6 +416,33 @@ function Remove-UserContextMenu {
     try {
         [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($SubKeyPath, $false)
     } catch { }
+}
+
+function Set-SecureDns {
+    param (
+        [ValidateSet('cloudflare', 'quad9', 'off')]
+        [string]$Provider
+    )
+
+    if (-not (Get-Command Set-DnsClientServerAddress -ErrorAction SilentlyContinue)) {
+        Write-Warn "Set-DnsClientServerAddress not available on this platform."
+        return
+    }
+
+    try {
+        $activeAdapters = Get-NetAdapter | Where-Object { $_.Status -eq "Up" -and $_.Virtual -eq $false }
+        foreach ($adapter in $activeAdapters) {
+            if ($Provider -eq 'cloudflare') {
+                Set-DnsClientServerAddress -InterfaceAlias $adapter.Name -ServerAddresses ("1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001")
+            } elseif ($Provider -eq 'quad9') {
+                Set-DnsClientServerAddress -InterfaceAlias $adapter.Name -ServerAddresses ("9.9.9.9", "149.112.112.112", "2620:fe::fe", "2620:fe::9")
+            } elseif ($Provider -eq 'off') {
+                Set-DnsClientServerAddress -InterfaceAlias $adapter.Name -ResetServerAddresses
+            }
+        }
+    } catch {
+        Write-Warn "Failed to configure DNS: $_"
+    }
 }
 
 function Find-VsCodePath {
@@ -645,6 +675,17 @@ function Export-CurrentConfiguration {
     $noAutoReboot = ((Get-RegValSafe -KeyPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -ValName "NoAutoRebootWithLoggedOnUsers") -eq 1)
     $excludeDrivers = ((Get-RegValSafe -KeyPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" -ValName "ExcludeWUDriversInQualityUpdate") -eq 1)
 
+    # Network
+    $secureDnsProvider = "off"
+    if (Get-Command Get-DnsClientServerAddress -ErrorAction SilentlyContinue) {
+        $dnsServers = (Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object { $_.ServerAddresses }).ServerAddresses
+        if ($dnsServers -contains "1.1.1.1" -or $dnsServers -contains "1.0.0.1") {
+            $secureDnsProvider = "cloudflare"
+        } elseif ($dnsServers -contains "9.9.9.9" -or $dnsServers -contains "149.112.112.112") {
+            $secureDnsProvider = "quad9"
+        }
+    }
+
     function To-YBool($b) { if ($b) { "true" } else { "false" } }
 
     $exportDir = Split-Path -Parent $OutputPath
@@ -837,6 +878,13 @@ windows_update:
 
   # Excludes third-party driver updates from routine Windows Updates (prevents GPU driver overwrites)
   exclude_drivers: $(To-YBool $excludeDrivers)
+
+# ------------------------------------------------------------------------------
+# 7. Network Configuration
+# ------------------------------------------------------------------------------
+network:
+  # Encrypted DNS (DoH) configuration ('cloudflare' | 'quad9' | 'off')
+  secure_dns_provider: '$secureDnsProvider'
 "@
 
     [System.IO.File]::WriteAllText($OutputPath, $yaml, [System.Text.Encoding]::UTF8)
@@ -1863,6 +1911,33 @@ if ($config['windows_update']) {
     if ($null -ne $config['windows_update']['exclude_drivers']) {
         $driverVal = if ($config['windows_update']['exclude_drivers']) { 1 } else { 0 }
         Check-RegChange -Category "windows_update" -SettingName "exclude_drivers" -RegPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" -ValName "ExcludeWUDriversInQualityUpdate" -DesiredValue $driverVal
+    }
+}
+
+# -------------------------------------------------------------
+# 7. Network Configuration
+# -------------------------------------------------------------
+Write-Step "Inspecting Network Settings..."
+
+if ($config['network'] -and $null -ne $config['network']['secure_dns_provider']) {
+    $desiredProvider = $config['network']['secure_dns_provider'].ToLower()
+    $currentProvider = "off"
+    if (Get-Command Get-DnsClientServerAddress -ErrorAction SilentlyContinue) {
+        $dnsServers = (Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object { $_.ServerAddresses }).ServerAddresses
+        if ($dnsServers -contains "1.1.1.1" -or $dnsServers -contains "1.0.0.1") {
+            $currentProvider = "cloudflare"
+        } elseif ($dnsServers -contains "9.9.9.9" -or $dnsServers -contains "149.112.112.112") {
+            $currentProvider = "quad9"
+        }
+    }
+
+    if ($currentProvider -ne $desiredProvider) {
+        Register-PlannedChange -Category "network" -SettingName "secure_dns_provider" -CurrentValue $currentProvider -DesiredValue $desiredProvider -AffectsExplorer $false -Arguments @($desiredProvider) -Action {
+            param($prov)
+            Set-SecureDns -Provider $prov
+        }
+    } else {
+        Write-Unchanged "network.secure_dns_provider" $desiredProvider
     }
 }
 
