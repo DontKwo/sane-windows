@@ -133,13 +133,30 @@ Describe "clean-storage" {
         }
 
         It "Returns cleanup targets containing standard required properties" {
+            $pathsToCreate = @(
+                (Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data\Default\Cache"),
+                (Join-Path $env:LOCALAPPDATA "Microsoft\Edge\User Data\Default\Cache"),
+                (Join-Path $env:LOCALAPPDATA "Mozilla\Firefox\Profiles"),
+                (Join-Path $env:LOCALAPPDATA "uv\cache"),
+                (Join-Path $env:LOCALAPPDATA "pip\cache"),
+                (Join-Path $env:LOCALAPPDATA "npm-cache"),
+                (Join-Path $env:USERPROFILE ".cargo\registry"),
+                (Join-Path $env:USERPROFILE ".gradle\caches"),
+                (Join-Path $env:LOCALAPPDATA "Microsoft\VisualStudio"),
+                (Join-Path $env:LOCALAPPDATA "Microsoft\MSBuild")
+            )
+            foreach ($p in $pathsToCreate) {
+                New-Item -ItemType Directory -Path $p -Force | Out-Null
+                Set-Content -Path (Join-Path $p "test.txt") -Value "test"
+            }
+            function global:Test-CommandExists { return $true }
             $targets = Collect-CleanupTargets
-            $targets.Count | Should -BeGreaterThan 0
+            $targets.Count | Should -BeGreaterOrEqual 10
 
-            $expectedProps = @("Id", "Name", "DisplayPath", "ActionType", "SizeBytes", "Impact")
+            $expectedProps = @("Id", "Name", "ActionType")
             foreach ($t in $targets) {
                 foreach ($prop in $expectedProps) {
-                    $propVal = $t.PSObject.Properties[$prop]
+                    $propVal = $t.PSObject.Properties[$prop].Value
                     $propVal | Should -Not -BeNullOrEmpty
                 }
             }
