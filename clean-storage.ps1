@@ -201,7 +201,9 @@ function Invoke-CleanupItem {
 
 function Collect-CleanupTargets {
     [OutputType([System.Collections.ArrayList])]
-    param()
+    param(
+        [int]$MinAgeDays = 0
+    )
     # Scans and assembles candidate cleanup operations.
     $targets = [System.Collections.ArrayList]@()
 
@@ -585,6 +587,31 @@ function Collect-CleanupTargets {
         }
     }
 
+    # VS Code Workspace Storage
+    $workspaceStorage = Join-Path $env:APPDATA "Code\User\workspaceStorage"
+    if (Test-Path -Path $workspaceStorage) {
+        $cutoff = if ($MinAgeDays -gt 0) { (Get-Date).AddDays(-$MinAgeDays) } else { $null }
+        $staleDirs = [System.Collections.ArrayList]@()
+        $staleSize = 0L
+        Get-ChildItem -Path $workspaceStorage -Directory -Force -ErrorAction SilentlyContinue | ForEach-Object {
+            if (-not $cutoff -or $_.LastWriteTime -le $cutoff) {
+                $null = $staleDirs.Add($_.FullName)
+                $staleSize += Get-PathSize -Path $_.FullName
+            }
+        }
+        if ($staleSize -gt 0) {
+            $null = $targets.Add([PSCustomObject]@{
+                Id            = "vscode-workspace-storage"
+                Name          = "VS Code Workspace Storage"
+                DisplayPath   = ($staleDirs -join "; ")
+                TargetPaths   = $staleDirs
+                ActionType    = "DeleteMultiple"
+                SizeBytes     = $staleSize
+                Impact        = "Stale workspace cache and extension data will be removed. Opening older projects may take slightly longer initially."
+            })
+        }
+    }
+
     # Windows Crash Dumps
     $crashDumps = @(
         (Join-Path $env:LOCALAPPDATA "CrashDumps"),
@@ -765,7 +792,7 @@ function Main {
     }
 
     $driveBefore = Get-PSDrive -Name C -ErrorAction SilentlyContinue
-    $targets = Collect-CleanupTargets
+    $targets = Collect-CleanupTargets -MinAgeDays $MinAgeDays
 
     if ($ExportJson) {
         $totalBytes = 0L
