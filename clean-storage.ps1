@@ -205,6 +205,25 @@ function Collect-CleanupTargets {
     # Scans and assembles candidate cleanup operations.
     $targets = [System.Collections.ArrayList]@()
 
+    # PSReadLine Command History
+    if (Get-Command Get-PSReadLineOption -ErrorAction SilentlyContinue) {
+        $historyPath = (Get-PSReadLineOption).HistorySavePath
+        if (Test-Path -Path $historyPath) {
+            $size = Get-PathSize -Path $historyPath
+            if ($size -gt 0) {
+                $null = $targets.Add([PSCustomObject]@{
+                    Id            = "psreadline-history"
+                    Name          = "PSReadLine Command History"
+                    DisplayPath   = $historyPath
+                    TargetPath    = $historyPath
+                    ActionType    = "DeletePath"
+                    SizeBytes     = $size
+                    Impact        = "PowerShell command history will be deleted. Past commands will not be available for autocompletion."
+                })
+            }
+        }
+    }
+
     # User Temp
     $userTemp = $env:TEMP
     if (Test-Path -Path $userTemp) {
