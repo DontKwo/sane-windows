@@ -263,7 +263,6 @@ function Test-ConfigFile {
             "show_file_extensions",
             "show_hidden_files",
             "launch_to_this_pc",
-            "classic_context_menu",
             "show_full_path_in_title",
             "show_seconds_in_clock",
             "add_open_with_code",
@@ -283,6 +282,7 @@ function Test-ConfigFile {
         )
         ui_debloat = @(
             "enable_dark_mode",
+            "classic_context_menu",
             "left_align_taskbar",
             "disable_aero_shake",
             "hide_taskbar_copilot_button",
@@ -701,9 +701,6 @@ explorer:
   # Open File Explorer directly to "This PC" instead of "Home / Quick Access"
   launch_to_this_pc: $(To-YBool $launchThisPC)
 
-  # Windows 11: Restores classic Windows 10 right-click context menu (no "Show more options")
-  classic_context_menu: $(To-YBool $classicContext)
-
   # Displays the full file system path in Explorer title bars
   show_full_path_in_title: $(To-YBool $showFullPath)
 
@@ -758,6 +755,9 @@ performance:
 ui_debloat:
   # System-wide dark mode for Windows OS and apps
   enable_dark_mode: $(To-YBool $isDarkMode)
+
+  # Windows 11: Restores classic Windows 10 right-click context menu (no "Show more options")
+  classic_context_menu: $(To-YBool $classicContext)
 
   # Windows 11: Reverts the centered taskbar back to the classic left-aligned position
   left_align_taskbar: $(To-YBool $isTaskbarLeft)
@@ -913,6 +913,7 @@ function Get-RegistryTargets {
         @{ Section="explorer"; Key="mouse_corner_clip_length"; Path="HKCU:\Control Panel\Desktop"; Name="MouseCornerClipLength"; Type="DWord" },
 
         # UI Debloat Additions (Accessibility Hotkeys)
+        @{ Section="ui_debloat"; Key="classic_context_menu"; Path="HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32"; Name=""; Type="String" },
         @{ Section="ui_debloat"; Key="sticky_keys"; Path="HKCU:\Control Panel\Accessibility\StickyKeys"; Name="Flags"; Type="String" },
         @{ Section="ui_debloat"; Key="toggle_keys"; Path="HKCU:\Control Panel\Accessibility\ToggleKeys"; Name="Flags"; Type="String" },
         @{ Section="ui_debloat"; Key="filter_keys"; Path="HKCU:\Control Panel\Accessibility\Keyboard Response"; Name="Flags"; Type="String" },
@@ -1381,35 +1382,6 @@ if ($null -ne $config['explorer']['show_full_path_in_title']) {
     Check-RegChange -Category "explorer" -SettingName "show_full_path_in_title" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\CabinetState" -ValName "FullPath" -DesiredValue $fullPathVal
 }
 
-if ($null -ne $config['explorer']['classic_context_menu']) {
-    if (-not $script:IsWindows11) {
-        Write-Skipped "explorer.classic_context_menu" "Native to Windows 10 (Windows 11 only)"
-    } else {
-        $clsidKey = "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}"
-        $isClassic = (Test-Path "$clsidKey\InprocServer32")
-        if ($config['explorer']['classic_context_menu']) {
-            if (-not $isClassic) {
-                Register-PlannedChange -Category "explorer" -SettingName "classic_context_menu" -CurrentValue "Windows 11 Modern" -DesiredValue "Windows 10 Classic Style" -AffectsExplorer $true -Arguments @($clsidKey) -Action {
-                    param($k)
-                    $null = New-Item -Path "$k\InprocServer32" -Force
-                    $null = Set-Item -Path "$k\InprocServer32" -Value ""
-                }
-            } else {
-                Write-Unchanged "explorer.classic_context_menu" "Enabled (Windows 10 Style)"
-            }
-        } else {
-            if ($isClassic) {
-                Register-PlannedChange -Category "explorer" -SettingName "classic_context_menu" -CurrentValue "Windows 10 Classic Style" -DesiredValue "Windows 11 Modern" -AffectsExplorer $true -Arguments @($clsidKey) -Action {
-                    param($k)
-                    Remove-Item -Path $k -Recurse -Force -ErrorAction SilentlyContinue
-                }
-            } else {
-                Write-Unchanged "explorer.classic_context_menu" "Windows 11 Modern"
-            }
-        }
-    }
-}
-
 if ($null -ne $config['explorer']['show_seconds_in_clock']) {
     $secVal = if ($config['explorer']['show_seconds_in_clock']) { 1 } else { 0 }
     Check-RegChange -Category "explorer" -SettingName "show_seconds_in_clock" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "ShowSecondsInSystemClock" -DesiredValue $secVal
@@ -1552,6 +1524,35 @@ if ($null -ne $config['ui_debloat']['enable_dark_mode']) {
     $darkVal = if ($config['ui_debloat']['enable_dark_mode']) { 0 } else { 1 }
     Check-RegChange -Category "ui_debloat" -SettingName "dark_mode_apps" -RegPath "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" -ValName "AppsUseLightTheme" -DesiredValue $darkVal
     Check-RegChange -Category "ui_debloat" -SettingName "dark_mode_system" -RegPath "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" -ValName "SystemUsesLightTheme" -DesiredValue $darkVal
+}
+
+if ($null -ne $config['ui_debloat']['classic_context_menu']) {
+    if (-not $script:IsWindows11) {
+        Write-Skipped "ui_debloat.classic_context_menu" "Native to Windows 10 (Windows 11 only)"
+    } else {
+        $clsidKey = "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}"
+        $isClassic = (Test-Path "$clsidKey\InprocServer32")
+        if ($config['ui_debloat']['classic_context_menu']) {
+            if (-not $isClassic) {
+                Register-PlannedChange -Category "ui_debloat" -SettingName "classic_context_menu" -CurrentValue "Windows 11 Modern" -DesiredValue "Windows 10 Classic Style" -AffectsExplorer $true -Arguments @($clsidKey) -Action {
+                    param($k)
+                    $null = New-Item -Path "$k\InprocServer32" -Force
+                    $null = Set-Item -Path "$k\InprocServer32" -Value ""
+                }
+            } else {
+                Write-Unchanged "ui_debloat.classic_context_menu" "Enabled (Windows 10 Style)"
+            }
+        } else {
+            if ($isClassic) {
+                Register-PlannedChange -Category "ui_debloat" -SettingName "classic_context_menu" -CurrentValue "Windows 10 Classic Style" -DesiredValue "Windows 11 Modern" -AffectsExplorer $true -Arguments @($clsidKey) -Action {
+                    param($k)
+                    Remove-Item -Path $k -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            } else {
+                Write-Unchanged "ui_debloat.classic_context_menu" "Windows 11 Modern"
+            }
+        }
+    }
 }
 
 if ($null -ne $config['ui_debloat']['left_align_taskbar']) {
