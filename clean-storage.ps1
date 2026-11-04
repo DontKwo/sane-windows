@@ -387,6 +387,42 @@ function Collect-CleanupTargets {
         }
     }
 
+    # NuGet Cache
+    $nugetCachePath = Join-Path $env:USERPROFILE ".nuget\packages"
+    if ((Test-CommandExists -CommandName "dotnet") -or (Test-Path -Path $nugetCachePath)) {
+        $size = Get-PathSize -Path $nugetCachePath
+        if ($size -gt 0) {
+            $hasDotnet = Test-CommandExists -CommandName "dotnet"
+            $null = $targets.Add([PSCustomObject]@{
+                Id            = "nuget-cache"
+                Name          = "NuGet HTTP Cache"
+                DisplayPath   = if ($hasDotnet) { "dotnet nuget locals http-cache --clear" } else { $nugetCachePath }
+                ActionType    = if ($hasDotnet) { "Command" } else { "DeletePath" }
+                ActionCommand = "dotnet nuget locals http-cache --clear"
+                TargetPath    = $nugetCachePath
+                SizeBytes     = $size
+                Impact        = "Cached NuGet packages will be deleted. Future .NET builds will pull packages from the NuGet registry."
+            })
+        }
+    }
+
+    # vcpkg Cache
+    $vcpkgCachePath = Join-Path $env:LOCALAPPDATA "vcpkg\archives"
+    if (Test-Path -Path $vcpkgCachePath) {
+        $size = Get-PathSize -Path $vcpkgCachePath
+        if ($size -gt 0) {
+            $null = $targets.Add([PSCustomObject]@{
+                Id            = "vcpkg-cache"
+                Name          = "vcpkg Downloads Cache"
+                DisplayPath   = $vcpkgCachePath
+                TargetPath    = $vcpkgCachePath
+                ActionType    = "DeletePath"
+                SizeBytes     = $size
+                Impact        = "Downloaded vcpkg archives will be deleted. Future vcpkg installs will re-download source archives."
+            })
+        }
+    }
+
     # Gradle Caches
     $gradleCachePath = Join-Path $env:USERPROFILE ".gradle\caches"
     if (Test-Path -Path $gradleCachePath) {
