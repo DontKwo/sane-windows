@@ -7,8 +7,8 @@ Modular system configuration and disk maintenance for Windows 10 and 11.
 ## Overview
 
 Sane Windows provides two snapshot-safe management tools:
-* **`setup.ps1` (`setup.bat`)**: Configures privacy, Explorer, performance, UI, developer ergonomics, and Windows Update settings defined in `config.yaml`. Takes an automatic snapshot before making modifications to allow immediate rollback.
-* **`clean-storage.ps1` (`clean-storage.bat`)**: Reclaims disk space by clearing temporary files, package caches (`uv`, `pip`, `npm`, `pnpm`, `yarn`), compiler toolchains, application caches, crash dumps, and container runtimes with explicit confirmation prompts.
+* **`setup.ps1`**: Configures privacy, Explorer, performance, UI, developer ergonomics, and Windows Update settings defined in `config.yaml`. Takes an automatic snapshot before making modifications to allow immediate rollback.
+* **`clean-storage.ps1`**: Reclaims disk space by clearing temporary files, package caches (`uv`, `pip`, `npm`, `pnpm`, `yarn`), compiler toolchains, application caches, crash dumps, and container runtimes with explicit confirmation prompts.
 
 ---
 
@@ -20,7 +20,6 @@ Edit preferences in `config.yaml`, then run:
 ```powershell
 .\setup.ps1
 ```
-*(Or double-click `setup.bat`)*
 
 * **Preview diffs (dry run):**
   ```powershell
@@ -70,7 +69,6 @@ Scan and clean system caches and build artifacts:
 ```powershell
 .\clean-storage.ps1
 ```
-*(Or run `clean-storage.bat`)*
 
 * **Preview cleanable items without deleting (dry run):**
   ```powershell
@@ -109,12 +107,26 @@ Cleaned targets include:
 
 ---
 
-### 3. Tooling Diagnostics
+### 3. Tooling Diagnostics & Auto Install / Update
 
 Diagnose installed developer CLIs and versions:
 ```powershell
 .\check-tooling.ps1
 ```
+
+* **Automatically install missing developer tools:**
+  ```powershell
+  .\check-tooling.ps1 -Install
+  ```
+* **Update installed developer tools:**
+  ```powershell
+  .\check-tooling.ps1 -Update
+  ```
+* **Install or update specific tools only:**
+  ```powershell
+  .\check-tooling.ps1 -Install -Tool uv, git
+  .\check-tooling.ps1 -Update -Tool pnpm
+  ```
 
 Supported CLIs include: `git`, `uv`, `python`, `pnpm`, `npm`, `cargo`, `docker`, and `wsl`.
 

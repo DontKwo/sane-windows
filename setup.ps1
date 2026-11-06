@@ -366,13 +366,13 @@ function Set-RegValSafe {
     if (-not (Test-Path -LiteralPath $KeyPath)) {
         try {
             if ($KeyPath -like "HKCU:\*") {
-                $sub = $KeyPath.Substring(5)
+                $sub = $KeyPath.Substring(5).TrimStart('\', '/')
                 $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($sub)
-                if ($null -ne $key) { Write-Verbose "Created HKCU registry key: $sub" }
+                if ($null -ne $key) { $key.Close(); Write-Verbose "Created HKCU registry key: $sub" }
             } elseif ($KeyPath -like "HKLM:\*") {
-                $sub = $KeyPath.Substring(5)
+                $sub = $KeyPath.Substring(5).TrimStart('\', '/')
                 $key = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey($sub)
-                if ($null -ne $key) { Write-Verbose "Created HKLM registry key: $sub" }
+                if ($null -ne $key) { $key.Close(); Write-Verbose "Created HKLM registry key: $sub" }
             } else {
                 $key = New-Item -Path $KeyPath -Force -ErrorAction Stop
                 if ($null -ne $key) { Write-Verbose "Created registry path: $KeyPath" }
@@ -398,17 +398,55 @@ function Remove-RegValSafe {
     }
 }
 
+function Test-SearchIndexerExclusionsConfigured {
+    try {
+        $type = [Type]::GetTypeFromProgID("Search.SearchManager")
+        if ($null -eq $type) { return $false }
+        $sm = [Activator]::CreateInstance($type)
+        if ($null -eq $sm) { return $false }
+        $csm = $sm.GetCatalog("SystemIndex").GetCrawlScopeManager()
+        $rules = $csm.EnumerateScopeRules()
+        $foundAll = $true
+        $devPaths = @("node_modules", ".venv", "target", ".cargo")
+        foreach ($folder in $devPaths) {
+            $pattern = "file:///*/$folder/*"
+            $hasRule = $false
+            if ($null -ne $rules) {
+                foreach ($rule in $rules) {
+                    if ($rule.Pattern -eq $pattern -and -not $rule.FollowFlags) {
+                        $hasRule = $true
+                        break
+                    }
+                }
+            }
+            if (-not $hasRule) { $foundAll = $false; break }
+        }
+        return $foundAll
+    } catch {
+        return $false
+    }
+}
+
 function Add-SearchIndexerExclusion {
+    if (-not (Test-IsAdmin)) {
+        Write-Warn "Updating Windows Search Indexer exclusions requires Administrator privileges."
+        return
+    }
     $devPaths = @("node_modules", ".venv", "target", ".cargo")
     try {
-        $sm = New-Object -ComObject Search.SearchManager -ErrorAction Stop
+        $type = [Type]::GetTypeFromProgID("Search.SearchManager")
+        if ($null -eq $type) {
+            Write-Warn "Windows Search Indexer COM interface is not available."
+            return
+        }
+        $sm = [Activator]::CreateInstance($type)
         $csm = $sm.GetCatalog("SystemIndex").GetCrawlScopeManager()
         foreach ($folder in $devPaths) {
             $csm.AddUserScopeRule("file:///*/$folder/*", $false, $false, $null)
         }
         $csm.SaveAll()
     } catch {
-        Write-Warn "Could not update Windows Search Indexer exclusions."
+        Write-Warn "Could not update Windows Search Indexer exclusions: $_"
     }
 }
 
@@ -441,6 +479,11 @@ function Set-SecureDns {
         [ValidateSet('cloudflare', 'quad9', 'off')]
         [string]$Provider
     )
+
+    if (-not (Test-IsAdmin)) {
+        Write-Warn "Configuring DNS client addresses requires Administrator privileges."
+        return
+    }
 
     if (-not (Get-Command Set-DnsClientServerAddress -ErrorAction SilentlyContinue)) {
         Write-Warn "Set-DnsClientServerAddress not available on this platform."
@@ -721,9 +764,9 @@ function Export-CurrentConfiguration {
 # Sane Windows - Windows Quality-of-Life & Performance Configuration
 # Exported from machine: $env:COMPUTERNAME on $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
 # ==============================================================================
-# Edit any setting below (true/false) and run 'setup.bat' or '.\setup.ps1'.
+# Edit any setting below (true/false) and run '.\setup.ps1'.
 # A snapshot of all your settings is saved before ANY change is made, so you
-# can revert anytime using 'setup.bat -Revert'.
+# can revert anytime using '.\setup.ps1 -Revert'.
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -1960,8 +2003,17 @@ if ($config['developer']['enable_terminal_duplicate_tab']) {
 }
 
 if ($config['developer']['exclude_dev_folders_from_search']) {
-    Register-PlannedChange -Category "developer" -SettingName "exclude_dev_folders_from_search" -CurrentValue "<needs update>" -DesiredValue "Exclude dev folders" -AffectsExplorer $false -Action {
-        Add-SearchIndexerExclusion
+    if (-not $isAdmin) {
+        Write-Skipped "developer.exclude_dev_folders_from_search" "Requires Administrator elevation"
+    } else {
+        $alreadyConfigured = Test-SearchIndexerExclusionsConfigured
+        if (-not $alreadyConfigured) {
+            Register-PlannedChange -Category "developer" -SettingName "exclude_dev_folders_from_search" -CurrentValue "<needs update>" -DesiredValue "Exclude dev folders" -AffectsExplorer $false -Action {
+                Add-SearchIndexerExclusion
+            }
+        } else {
+            Write-Unchanged "developer.exclude_dev_folders_from_search" "Dev folders excluded"
+        }
     }
 } else {
     Write-Unchanged "developer.exclude_dev_folders_from_search" "Skip exclusion"
@@ -2024,9 +2076,13 @@ if ($config['network'] -and $null -ne $config['network']['secure_dns_provider'])
     }
 
     if ($currentProvider -ne $desiredProvider) {
-        Register-PlannedChange -Category "network" -SettingName "secure_dns_provider" -CurrentValue $currentProvider -DesiredValue $desiredProvider -AffectsExplorer $false -Arguments @($desiredProvider) -Action {
-            param($prov)
-            Set-SecureDns -Provider $prov
+        if (-not $isAdmin) {
+            Write-Skipped "network.secure_dns_provider" "Requires Administrator elevation"
+        } else {
+            Register-PlannedChange -Category "network" -SettingName "secure_dns_provider" -CurrentValue $currentProvider -DesiredValue $desiredProvider -AffectsExplorer $false -Arguments @($desiredProvider) -Action {
+                param($prov)
+                Set-SecureDns -Provider $prov
+            }
         }
     } else {
         Write-Unchanged "network.secure_dns_provider" $desiredProvider
