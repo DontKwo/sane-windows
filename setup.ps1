@@ -1,0 +1,2429 @@
+<#
+.SYNOPSIS
+    Sane Windows: Windows QOL, Privacy, Performance, and Developer Ergonomics.
+
+.DESCRIPTION
+    Applies configuration from config.yaml, takes snapshots before modifying anything,
+    only applies changes if the value would be different, and supports full rollbacks.
+
+.PARAMETER ConfigPath
+    Path to the YAML configuration file (default: .\config.yaml).
+
+.PARAMETER Revert
+    Reverts system settings to a previously saved snapshot.
+
+.PARAMETER SnapshotPath
+    Path to a specific snapshot JSON file to revert to (default: snapshots\latest.json).
+
+.PARAMETER ListSnapshots
+    Lists all saved snapshot files.
+
+.PARAMETER NoExplorerRestart
+    Prevents restarting File Explorer after Explorer/Taskbar changes.
+
+.PARAMETER VerboseOutput
+    Displays unchanged settings alongside planned modifications.
+
+.PARAMETER Yes
+    Applies all planned changes without confirmation prompts.
+
+.PARAMETER WhatIf
+    Previews planned changes without modifying system settings.
+
+.PARAMETER ExportConfig
+    Exports current machine settings into a YAML configuration file.
+
+.PARAMETER ExportPath
+    Output file path when exporting configuration with -ExportConfig.
+
+.PARAMETER Elevate
+    Requests UAC elevation if running without Administrator privileges.
+#>
+
+[CmdletBinding()]
+param(
+    [string]$ConfigPath,
+    [switch]$Revert,
+    [string]$SnapshotPath,
+    [switch]$ListSnapshots,
+    [switch]$NoExplorerRestart,
+    [switch]$VerboseOutput,
+    [switch]$Yes,
+    [switch]$WhatIf,
+    [switch]$ExportConfig,
+    [string]$ExportPath,
+    [switch]$Elevate,
+    [switch]$CreateRestorePoint
+)
+
+$ErrorActionPreference = 'Stop'
+
+# --- OS Platform Guard ---
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
+    Write-Host "`n[ERROR] Sane Windows is designed exclusively for Windows environments." -ForegroundColor Red
+    Write-Host "Detected OS Platform: $([System.Environment]::OSVersion.Platform)" -ForegroundColor Yellow
+    Write-Host "Execution aborted. Windows tweaks cannot be applied to Linux/macOS.`n" -ForegroundColor Yellow
+    exit 1
+}
+
+# --- Windows Version Detection ---
+$script:WinBuild = [System.Environment]::OSVersion.Version.Build
+$script:IsWindows11 = ($script:WinBuild -ge 22000)
+$script:IsWindows11_23H2 = ($script:WinBuild -ge 22631)
+
+$ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Definition }
+if (-not $ScriptDir) { $ScriptDir = (Get-Location).Path }
+if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
+    $ConfigPath = Join-Path $ScriptDir "config.yaml"
+}
+
+$script:changedList = [System.Collections.ArrayList]@()
+
+# UI Colors & Formatting
+function Write-Header {
+    param([string]$Text)
+    Write-Host "`n=================================================================" -ForegroundColor Cyan
+    Write-Host " $Text" -ForegroundColor Cyan
+    Write-Host "=================================================================`n" -ForegroundColor Cyan
+}
+
+function Write-Step {
+    param([string]$Text)
+    if ($VerboseOutput) {
+        Write-Host "[+] $Text" -ForegroundColor Yellow
+    }
+}
+
+function Write-Changed {
+    param([string]$Category, [string]$Setting, [string]$OldVal, [string]$NewVal)
+    $null = $script:changedList.Add([PSCustomObject]@{
+        Category = $Category
+        Setting  = $Setting
+        OldValue = $OldVal
+        NewValue = $NewVal
+    })
+    Write-Host "  [CHANGED] " -ForegroundColor Green -NoNewline
+    Write-Host "$Category." -ForegroundColor Cyan -NoNewline
+    Write-Host "$Setting" -ForegroundColor White -NoNewline
+    Write-Host " : " -ForegroundColor Gray -NoNewline
+    Write-Host "$OldVal" -ForegroundColor DarkGray -NoNewline
+    Write-Host " -> " -ForegroundColor Gray -NoNewline
+    Write-Host "$NewVal" -ForegroundColor Green
+}
+
+function Write-Unchanged {
+    param([string]$Setting, [string]$Val)
+    # Intentionally silent by default; only show if -VerboseOutput is passed
+    if ($VerboseOutput) {
+        Write-Host "    [UNCHANGED] $Setting : already $Val" -ForegroundColor DarkGray
+    }
+}
+
+function Write-Skipped {
+    param([string]$Setting, [string]$Reason)
+    if ($VerboseOutput) {
+        Write-Host "    [SKIPPED]   $Setting : $Reason" -ForegroundColor DarkYellow
+    }
+}
+
+function Write-Info {
+    param([string]$Text)
+    if ($VerboseOutput) {
+        Write-Host "    [i] $Text" -ForegroundColor Gray
+    }
+}
+
+function Write-Success {
+    param([string]$Text)
+    Write-Host "    [OK] $Text" -ForegroundColor Green
+}
+
+function Write-Warn {
+    param([string]$Text)
+    Write-Host "    [!] $Text" -ForegroundColor Yellow
+}
+
+# --- Elevation Check ---
+function Test-IsAdmin {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+# Self-elevate to Administrator if requested and not elevated
+if ($Elevate -and -not (Test-IsAdmin)) {
+    $forwardArgs = @()
+    foreach ($boundKey in $PSBoundParameters.Keys) {
+        if ($boundKey -eq "Elevate") { continue }
+        $boundVal = $PSBoundParameters[$boundKey]
+        if ($boundVal -is [switch]) {
+            if ($boundVal.IsPresent) {
+                $forwardArgs += "-$boundKey"
+            }
+        } elseif ($boundVal -is [bool]) {
+            if ($boundVal) {
+                $forwardArgs += "-$boundKey"
+            }
+        } else {
+            $forwardArgs += "-$boundKey"
+            $forwardArgs += "$boundVal"
+        }
+    }
+    $fullArgList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"") + $forwardArgs
+    Start-Process powershell.exe -Verb RunAs -ArgumentList $fullArgList
+    exit 0
+}
+
+# --- Lightweight Pure-PowerShell YAML Parser ---
+function ConvertFrom-SimpleYaml {
+    param([string]$YamlContent)
+    $lines = $YamlContent -split "`r?`n"
+    $root = @{}
+    $currentSection = $null
+    $currentListKey = $null
+
+    foreach ($rawLine in $lines) {
+        $line = $rawLine
+        if ($line -match '^\s*#') { continue }
+        if ($line.Trim().Length -eq 0) { continue }
+
+        # Section header: "section:"
+        if ($line -match '^([a-zA-Z0-9_-]+):\s*$') {
+            $sectionName = $matches[1]
+            $root[$sectionName] = @{}
+            $currentSection = $sectionName
+            $currentListKey = $null
+            continue
+        }
+
+        # List item: "  - value"
+        if ($line -match '^\s+-\s+(.+)$') {
+            $rawItem = $matches[1].Trim()
+            if (($rawItem.StartsWith('"') -and $rawItem.EndsWith('"') -and $rawItem.Length -ge 2) -or
+                ($rawItem.StartsWith("'") -and $rawItem.EndsWith("'") -and $rawItem.Length -ge 2)) {
+                $val = $rawItem.Substring(1, $rawItem.Length - 2)
+            } else {
+                $val = ($rawItem -replace '\s+#.*$', '').Trim()
+            }
+            if ($currentSection -and $currentListKey) {
+                $root[$currentSection][$currentListKey].Add($val)
+            }
+            continue
+        }
+
+        # Key-Value: "  key: value"
+        if ($line -match '^\s+([a-zA-Z0-9_-]+):\s*(.*)$') {
+            $key = $matches[1]
+            $valStr = $matches[2].Trim()
+            $currentListKey = $null
+
+            # Preserve inner content if quoted, else strip inline comments and trim
+            if (($valStr.StartsWith('"') -and $valStr.EndsWith('"') -and $valStr.Length -ge 2) -or
+                ($valStr.StartsWith("'") -and $valStr.EndsWith("'") -and $valStr.Length -ge 2)) {
+                $root[$currentSection][$key] = $valStr.Substring(1, $valStr.Length - 2)
+            } else {
+                $valStr = ($valStr -replace '\s+#.*$', '').Trim()
+                if ($valStr -eq '') {
+                    $currentListKey = $key
+                    $root[$currentSection][$key] = [System.Collections.Generic.List[object]]::new()
+                } elseif ($valStr -eq '[]') {
+                    $root[$currentSection][$key] = [System.Collections.Generic.List[object]]::new()
+                } elseif ($valStr -ieq 'true' -or $valStr -ieq 'yes') {
+                    $root[$currentSection][$key] = $true
+                } elseif ($valStr -ieq 'false' -or $valStr -ieq 'no') {
+                    $root[$currentSection][$key] = $false
+                } elseif ($valStr -match '^-?\d+$') {
+                    $root[$currentSection][$key] = [int]$valStr
+                } else {
+                    $root[$currentSection][$key] = $valStr
+                }
+            }
+            continue
+        }
+    }
+    return $root
+}
+
+# Validates config sections and setting keys against allowed options.
+function Test-ConfigFile {
+    [OutputType([bool])]
+    param([hashtable]$Config)
+
+    $schema = @{
+        privacy = @(
+            "disable_telemetry",
+            "disable_advertising_id",
+            "disable_bing_search",
+            "disable_activity_history",
+            "disable_feedback_prompts",
+            "disable_telemetry_tasks",
+            "disable_suggested_actions",
+            "disable_diagtrack_service"
+        )
+        explorer = @(
+            "show_file_extensions",
+            "show_hidden_files",
+            "launch_to_this_pc",
+            "show_full_path_in_title",
+            "show_seconds_in_clock",
+            "add_open_with_code",
+            "add_open_in_terminal",
+            "enable_taskbar_end_task",
+            "disable_search_highlights",
+            "disable_store_app_prompt",
+            "disable_lock_screen_ads",
+            "disable_snap_assist_popups",
+            "disable_mouse_sticky_corners"
+        )
+        performance = @(
+            "disable_startup_delay",
+            "disable_edge_background_tasks",
+            "disable_fast_startup",
+            "unlock_ultimate_performance",
+            "enable_hardware_gpu_scheduling"
+        )
+        ui_debloat = @(
+            "enable_dark_mode",
+            "classic_context_menu",
+            "left_align_taskbar",
+            "disable_aero_shake",
+            "hide_taskbar_copilot_button",
+            "hide_taskbar_task_view",
+            "hide_taskbar_widgets",
+            "disable_widgets_hover",
+            "disable_start_recommendations",
+            "silence_tips_and_suggestions",
+            "remove_bloatware_apps",
+            "disable_sticky_keys_popup",
+            "bloatware_list"
+        )
+        developer = @(
+            "defender_dev_exclusions",
+            "enable_developer_mode",
+            "enable_long_paths",
+            "configure_git_autocrlf",
+            "enable_powershell_shortcuts",
+            "enable_terminal_duplicate_tab",
+            "require_ctrl_shift_copy_paste",
+            "exclude_dev_folders_from_search"
+        )
+        windows_update = @(
+            "no_auto_restart_logged_on",
+            "exclude_drivers"
+        )
+        network = @(
+            "secure_dns_provider"
+        )
+    }
+
+    $valid = $true
+    if ($null -eq $Config) {
+        return $true
+    }
+
+    foreach ($section in $Config.Keys) {
+        if (-not $schema.ContainsKey($section)) {
+            $valid = $false
+            if ($Config[$section] -is [hashtable] -and $Config[$section].Keys.Count -gt 0) {
+                foreach ($key in $Config[$section].Keys) {
+                    Write-Warn "Unrecognized setting in config.yaml: [$section] -> $key"
+                }
+            } else {
+                Write-Warn "Unrecognized setting in config.yaml: [$section] -> *"
+            }
+            continue
+        }
+
+        $allowedKeys = $schema[$section]
+        if ($Config[$section] -is [hashtable]) {
+            foreach ($key in $Config[$section].Keys) {
+                if ($allowedKeys -notcontains $key) {
+                    $valid = $false
+                    Write-Warn "Unrecognized setting in config.yaml: [$section] -> $key"
+                }
+            }
+        }
+    }
+
+    return $valid
+}
+
+# --- Safe Registry Access ---
+function Get-RegValSafe {
+    param([string]$KeyPath, [string]$ValName)
+    if (-not (Test-Path -LiteralPath $KeyPath)) { return $null }
+    try {
+        $item = Get-ItemProperty -LiteralPath $KeyPath -Name $ValName -ErrorAction SilentlyContinue
+        if ($null -ne $item -and $null -ne $item.$ValName) {
+            return $item.$ValName
+        }
+    } catch { }
+    return $null
+}
+
+function Set-RegValSafe {
+    param([string]$KeyPath, [string]$ValName, $Value, [string]$Type = "DWord")
+    if (-not (Test-Path -LiteralPath $KeyPath)) {
+        try {
+            if ($KeyPath -like "HKCU:\*") {
+                $sub = $KeyPath.Substring(5).TrimStart('\', '/')
+                $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($sub)
+                if ($null -ne $key) { $key.Close(); Write-Verbose "Created HKCU registry key: $sub" }
+            } elseif ($KeyPath -like "HKLM:\*") {
+                $sub = $KeyPath.Substring(5).TrimStart('\', '/')
+                $key = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey($sub)
+                if ($null -ne $key) { $key.Close(); Write-Verbose "Created HKLM registry key: $sub" }
+            } else {
+                $key = New-Item -Path $KeyPath -Force -ErrorAction Stop
+                if ($null -ne $key) { Write-Verbose "Created registry path: $KeyPath" }
+            }
+        } catch {
+            Write-Warn "Failed to create registry key $KeyPath : $_"
+            throw
+        }
+    }
+    try {
+        $prop = Set-ItemProperty -LiteralPath $KeyPath -Name $ValName -Value $Value -Type $Type -Force -ErrorAction Stop
+        if ($null -ne $prop) { Write-Verbose "Set registry value $ValName at $KeyPath" }
+    } catch {
+        Write-Warn "Failed to set registry value $ValName at $KeyPath : $_"
+        throw
+    }
+}
+
+function Remove-RegValSafe {
+    param([string]$KeyPath, [string]$ValName)
+    if (Test-Path -LiteralPath $KeyPath) {
+        Remove-ItemProperty -LiteralPath $KeyPath -Name $ValName -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-SearchIndexerExclusionsConfigured {
+    try {
+        $type = [Type]::GetTypeFromProgID("Search.SearchManager")
+        if ($null -eq $type) { return $false }
+        $sm = [Activator]::CreateInstance($type)
+        if ($null -eq $sm) { return $false }
+        $csm = $sm.GetCatalog("SystemIndex").GetCrawlScopeManager()
+        $rules = $csm.EnumerateScopeRules()
+        $foundAll = $true
+        $devPaths = @("node_modules", ".venv", "target", ".cargo")
+        foreach ($folder in $devPaths) {
+            $pattern = "file:///*/$folder/*"
+            $hasRule = $false
+            if ($null -ne $rules) {
+                foreach ($rule in $rules) {
+                    if ($rule.Pattern -eq $pattern -and -not $rule.FollowFlags) {
+                        $hasRule = $true
+                        break
+                    }
+                }
+            }
+            if (-not $hasRule) { $foundAll = $false; break }
+        }
+        return $foundAll
+    } catch {
+        return $false
+    }
+}
+
+function Add-SearchIndexerExclusion {
+    if (-not (Test-IsAdmin)) {
+        Write-Warn "Updating Windows Search Indexer exclusions requires Administrator privileges."
+        return
+    }
+    $devPaths = @("node_modules", ".venv", "target", ".cargo")
+    try {
+        $type = [Type]::GetTypeFromProgID("Search.SearchManager")
+        if ($null -eq $type) {
+            Write-Warn "Windows Search Indexer COM interface is not available."
+            return
+        }
+        $sm = [Activator]::CreateInstance($type)
+        $csm = $sm.GetCatalog("SystemIndex").GetCrawlScopeManager()
+        foreach ($folder in $devPaths) {
+            $csm.AddUserScopeRule("file:///*/$folder/*", $false, $false, $null)
+        }
+        $csm.SaveAll()
+    } catch {
+        Write-Warn "Could not update Windows Search Indexer exclusions: $_"
+    }
+}
+
+# --- Context Menu Helpers ---
+function Set-UserContextMenu {
+    param(
+        [string]$SubKeyPath,
+        [string]$MenuText,
+        [string]$IconPath,
+        [string]$CommandStr
+    )
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($SubKeyPath)
+    if ($MenuText) { $key.SetValue("", $MenuText) }
+    if ($IconPath) { $key.SetValue("Icon", $IconPath) }
+    $cmdKey = $key.CreateSubKey("command")
+    $cmdKey.SetValue("", $CommandStr)
+    $cmdKey.Close()
+    $key.Close()
+}
+
+function Remove-UserContextMenu {
+    param([string]$SubKeyPath)
+    try {
+        [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($SubKeyPath, $false)
+    } catch { }
+}
+
+function Set-SecureDns {
+    param (
+        [ValidateSet('cloudflare', 'quad9', 'off')]
+        [string]$Provider
+    )
+
+    if (-not (Test-IsAdmin)) {
+        Write-Warn "Configuring DNS client addresses requires Administrator privileges."
+        return
+    }
+
+    if (-not (Get-Command Set-DnsClientServerAddress -ErrorAction SilentlyContinue)) {
+        Write-Warn "Set-DnsClientServerAddress not available on this platform."
+        return
+    }
+
+    try {
+        $activeAdapters = Get-NetAdapter | Where-Object { $_.Status -eq "Up" -and $_.Virtual -eq $false }
+        foreach ($adapter in $activeAdapters) {
+            if ($Provider -eq 'cloudflare') {
+                Set-DnsClientServerAddress -InterfaceAlias $adapter.Name -ServerAddresses ("1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001")
+            } elseif ($Provider -eq 'quad9') {
+                Set-DnsClientServerAddress -InterfaceAlias $adapter.Name -ServerAddresses ("9.9.9.9", "149.112.112.112", "2620:fe::fe", "2620:fe::9")
+            } elseif ($Provider -eq 'off') {
+                Set-DnsClientServerAddress -InterfaceAlias $adapter.Name -ResetServerAddresses
+            }
+        }
+    } catch {
+        Write-Warn "Failed to configure DNS: $_"
+    }
+}
+
+function Find-VsCodePath {
+    $cmd = Get-Command code -ErrorAction SilentlyContinue
+    if ($cmd) {
+        $codeDir = Split-Path -Parent $cmd.Source
+        $parentExe = Join-Path (Split-Path -Parent $codeDir) "Code.exe"
+        if (Test-Path -LiteralPath $parentExe) { return $parentExe }
+        $binExe = Join-Path $codeDir "Code.exe"
+        if (Test-Path -LiteralPath $binExe) { return $binExe }
+    }
+    $candidates = @(
+        "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe",
+        "$env:ProgramFiles\Microsoft VS Code\Code.exe",
+        "${env:ProgramFiles(x86)}\Microsoft VS Code\Code.exe"
+    )
+    foreach ($c in $candidates) {
+        if (Test-Path -LiteralPath $c) { return $c }
+    }
+    return $null
+}
+
+function Find-WindowsTerminalPath {
+    $cmd = Get-Command wt -ErrorAction SilentlyContinue
+    if ($cmd -and (Test-Path -LiteralPath $cmd.Source)) { return $cmd.Source }
+    $wtApp = "$env:LOCALAPPDATA\Microsoft\WindowsApps\wt.exe"
+    if (Test-Path -LiteralPath $wtApp) { return $wtApp }
+    return "wt.exe"
+}
+
+function Test-UltimatePerformanceUnlocked {
+    try {
+        $schemes = Get-ChildItem "HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes" -ErrorAction SilentlyContinue
+        foreach ($s in $schemes) {
+            $fn = (Get-ItemProperty $s.PSPath -Name "FriendlyName" -ErrorAction SilentlyContinue).FriendlyName
+            if ($fn -like "*Ultimate Performance*" -or $s.PSChildName -eq "e9a42b02-d5df-448d-aa00-03f14749eb61") {
+                return $true
+            }
+        }
+    } catch { }
+    return $false
+}
+
+function Remove-JsonComments {
+    param([string]$Json)
+    $pattern = '(?s)("[^"\\]*(?:\\.[^"\\]*)*")|/\*.*?\*/|//[^\r\n]*'
+    return [regex]::Replace($Json, $pattern, '$1')
+}
+
+function Get-WindowsTerminalSettingsPaths {
+    return @(
+        "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json",
+        "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json",
+        "$env:LOCALAPPDATA\Microsoft\Windows Terminal\settings.json",
+        "$env:LOCALAPPDATA\Microsoft\Windows Terminal Preview\settings.json"
+    )
+}
+
+function Get-TerminalCopyPasteConfigured {
+    $wtSettingsPaths = Get-WindowsTerminalSettingsPaths
+    foreach ($wtPath in $wtSettingsPaths) {
+        if (-not (Test-Path -LiteralPath $wtPath)) { continue }
+        try {
+            $raw = Get-Content -LiteralPath $wtPath -Raw
+            $clean = Remove-JsonComments $raw
+            $wt = $clean | ConvertFrom-Json
+            $copyShift = $wt.keybindings | Where-Object { ($_.id -like "*copy*" -or $_.command -eq "copy" -or ($_.command.action -eq "copy")) -and $_.keys -eq "ctrl+shift+c" }
+            $pasteShift = $wt.keybindings | Where-Object { ($_.id -like "*paste*" -or $_.command -eq "paste") -and $_.keys -eq "ctrl+shift+v" }
+            $cUnbound = $wt.keybindings | Where-Object { $_.keys -eq "ctrl+c" -and ($_.action -eq "unbound" -or $_.command -eq "unbound" -or [string]::IsNullOrEmpty($_.id)) }
+            $vUnbound = $wt.keybindings | Where-Object { $_.keys -eq "ctrl+v" -and ($_.action -eq "unbound" -or $_.command -eq "unbound" -or [string]::IsNullOrEmpty($_.id)) }
+            if ($null -ne $copyShift -and $null -ne $pasteShift -and $null -ne $cUnbound -and $null -ne $vUnbound) {
+                return $true
+            }
+        } catch { }
+    }
+    return $false
+}
+
+function Set-TerminalCopyPasteKeybindings {
+    param([bool]$Enable)
+    $wtSettingsPaths = Get-WindowsTerminalSettingsPaths
+    foreach ($wtPath in $wtSettingsPaths) {
+        if (-not (Test-Path -LiteralPath $wtPath)) { continue }
+        try {
+            $raw = Get-Content -LiteralPath $wtPath -Raw
+            $clean = Remove-JsonComments $raw
+            $wt = $clean | ConvertFrom-Json
+            $kbs = [System.Collections.ArrayList]@()
+            if ($wt.keybindings) {
+                foreach ($kb in $wt.keybindings) {
+                    if ($kb.keys -in @("ctrl+c", "ctrl+v", "ctrl+shift+c", "ctrl+shift+v")) {
+                        continue
+                    }
+                    $null = $kbs.Add($kb)
+                }
+            }
+            if ($Enable) {
+                $copyAction = $wt.actions | Where-Object { $_.command -eq "copy" -or ($_.command.action -eq "copy") }
+                $copyId = if ($copyAction) { $copyAction.id } else { $null }
+
+                $pasteAction = $wt.actions | Where-Object { $_.command -eq "paste" }
+                $pasteId = if ($pasteAction) { $pasteAction.id } else { $null }
+
+                $copyBinding = if ($copyId) { [PSCustomObject]@{ id = $copyId; keys = "ctrl+shift+c" } } else { [PSCustomObject]@{ command = [PSCustomObject]@{ action = "copy"; singleLine = $false }; keys = "ctrl+shift+c" } }
+                $pasteBinding = if ($pasteId) { [PSCustomObject]@{ id = $pasteId; keys = "ctrl+shift+v" } } else { [PSCustomObject]@{ command = "paste"; keys = "ctrl+shift+v" } }
+
+                $null = $kbs.Add($copyBinding)
+                $null = $kbs.Add($pasteBinding)
+                $null = $kbs.Add([PSCustomObject]@{ command = "unbound"; keys = "ctrl+v" })
+                $null = $kbs.Add([PSCustomObject]@{ command = "unbound"; keys = "ctrl+c" })
+            } else {
+                $copyAction = $wt.actions | Where-Object { $_.command -eq "copy" -or ($_.command.action -eq "copy") }
+                if ($copyAction) {
+                    $null = $kbs.Add([PSCustomObject]@{ id = $copyAction.id; keys = "ctrl+c" })
+                }
+                $pasteAction = $wt.actions | Where-Object { $_.command -eq "paste" }
+                if ($pasteAction) {
+                    $null = $kbs.Add([PSCustomObject]@{ id = $pasteAction.id; keys = "ctrl+v" })
+                }
+            }
+            $wt.keybindings = $kbs
+            $json = $wt | ConvertTo-Json -Depth 20
+            [System.IO.File]::WriteAllText($wtPath, $json, [System.Text.Encoding]::UTF8)
+        } catch {
+            Write-Warn "Failed to update Windows Terminal settings at $wtPath : $_"
+        }
+    }
+}
+
+# --- Config Exporter ---
+function Export-CurrentConfiguration {
+    param([string]$OutputPath)
+    Write-Header "Exporting Current Machine Configuration"
+
+    # Privacy
+    $tele1 = Get-RegValSafe -KeyPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -ValName "AllowTelemetry"
+    $tele2 = Get-RegValSafe -KeyPath "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" -ValName "AllowTelemetry"
+    $isTelemetryDisabled = ($tele1 -eq 0 -or $tele2 -eq 0)
+
+    $isAdIdDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" -ValName "Enabled") -eq 0)
+
+    $bing1 = Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" -ValName "BingSearchEnabled"
+    $bing2 = Get-RegValSafe -KeyPath "HKCU:\Software\Policies\Microsoft\Windows\Explorer" -ValName "DisableSearchBoxSuggestions"
+    $isBingDisabled = ($bing1 -eq 0 -or $bing2 -eq 1)
+
+    $act = Get-RegValSafe -KeyPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" -ValName "EnableActivityFeed"
+    $isActDisabled = ($act -eq 0)
+
+    $siuf = Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Siuf\Rules" -ValName "NumberOfSIUFInPeriod"
+    $isFeedbackDisabled = ($siuf -eq 0)
+
+    # Telemetry scheduled tasks
+    $appraiserTask = Get-ScheduledTask -TaskPath "\Microsoft\Windows\Application Experience\" -TaskName "Microsoft Compatibility Appraiser" -ErrorAction SilentlyContinue
+    if (-not $appraiserTask) {
+        $appraiserTask = Get-ScheduledTask -TaskPath "\Microsoft\Windows\Application Experience\" -TaskName "Microsoft Compatibility Appraiser Exp" -ErrorAction SilentlyContinue
+    }
+    $isTelemetryTasksDisabled = if ($appraiserTask) { $appraiserTask.State -eq "Disabled" } else { $false }
+
+    $isSuggestedActionsDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\SmartActionPlatform\SmartClipboard" -ValName "Disabled") -eq 1)
+
+    $diagTrackState = Get-RegValSafe -KeyPath "HKLM:\SYSTEM\CurrentControlSet\Services\DiagTrack" -ValName "Start"
+    $isDiagTrackDisabled = ($diagTrackState -eq 4)
+
+    # Explorer
+    $showExt = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "HideFileExt") -eq 0)
+    $showHidden = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "Hidden") -eq 1)
+    $launchThisPC = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "LaunchTo") -eq 1)
+    $classicContext = (Test-Path -LiteralPath "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32")
+    $showFullPath = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\CabinetState" -ValName "FullPath") -eq 1)
+    $showSeconds = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "ShowSecondsInSystemClock") -eq 1)
+    $hasVsCodeMenu = (Test-Path -LiteralPath "HKCU:\Software\Classes\Directory\Background\shell\VSCode")
+    $hasTerminalMenu = (Test-Path -LiteralPath "HKCU:\Software\Classes\Directory\Background\shell\wt")
+
+    $isTaskbarEndTask = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings" -ValName "TaskbarEndTask") -eq 1)
+    $isSearchHighlightsDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" -ValName "IsDynamicSearchBoxEnabled") -eq 0)
+    $isStorePromptDisabled = ((Get-RegValSafe -KeyPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" -ValName "NoUseStoreOpenWith") -eq 1)
+    $isLockOverlayDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -ValName "RotatingLockScreenOverlayEnabled") -eq 0)
+    $isLockSubDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -ValName "SubscribedContent-338387Enabled") -eq 0)
+    $isLockScreenAdsDisabled = ($isLockOverlayDisabled -and $isLockSubDisabled)
+    $isSnapAssistDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "SnapAssist") -eq 0)
+    $isMouseStickyCornersDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Control Panel\Desktop" -ValName "MouseCornerClipLength") -eq 0)
+
+    # Performance
+    $disableDelay = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Serialize" -ValName "StartupDelayInMSec") -eq 0)
+    $edge1 = Get-RegValSafe -KeyPath "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -ValName "StartupBoostEnabled"
+    $disableEdge = ($edge1 -eq 0)
+    $disableFastStart = ((Get-RegValSafe -KeyPath "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" -ValName "HiberbootEnabled") -eq 0)
+    $isUltimateUnlocked = (Test-UltimatePerformanceUnlocked)
+    $isHwGpuEnabled = ((Get-RegValSafe -KeyPath "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -ValName "HwSchMode") -eq 2)
+
+    # UI Debloat
+    $isDarkMode = ((Get-RegValSafe -KeyPath "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" -ValName "AppsUseLightTheme") -eq 0 -and (Get-RegValSafe -KeyPath "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" -ValName "SystemUsesLightTheme") -eq 0)
+    $isTaskbarLeft = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "TaskbarAl") -eq 0)
+    $isAeroShakeDisabled = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "DisallowShaking") -eq 1)
+
+    $hideCopilot = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "ShowCopilotButton") -eq 0)
+    $hideTaskView = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "ShowTaskViewButton") -eq 0)
+    $hideWidgets = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "TaskbarDa") -eq 0)
+    $disableWidgetsHover = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "TaskbarDa") -eq 0)
+    $disableStartRecs = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "Start_IrisRecommendations") -eq 0)
+    $silenceTips = ((Get-RegValSafe -KeyPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -ValName "SubscribedContent-338388Enabled") -eq 0)
+    
+    $skFlags = Get-RegValSafe -KeyPath "HKCU:\Control Panel\Accessibility\StickyKeys" -ValName "Flags"
+    $disableSticky = if ($skFlags) { (([int]$skFlags) -band 4) -eq 0 } else { $false }
+
+    # Developer
+    $isDevMode = ((Get-RegValSafe -KeyPath "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" -ValName "AllowDevelopmentWithoutDevLicense") -eq 1)
+    $enableLongPaths = ((Get-RegValSafe -KeyPath "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -ValName "LongPathsEnabled") -eq 1)
+    $crlfVal = (git config --global core.autocrlf 2>$null)
+    $gitCrlf = ($crlfVal -ieq 'true')
+
+    $docs = [Environment]::GetFolderPath('MyDocuments')
+    $p1 = Join-Path $docs "WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
+    $p2 = Join-Path $docs "PowerShell\Microsoft.PowerShell_profile.ps1"
+    $psShortcuts = $false
+    if ((Test-Path -LiteralPath $p1) -and ((Get-Content -LiteralPath $p1 -Raw) -match "# >>> (Sane Windows|Useful Setup) Developer Ergonomics >>>")) { $psShortcuts = $true }
+    if ((Test-Path -LiteralPath $p2) -and ((Get-Content -LiteralPath $p2 -Raw) -match "# >>> (Sane Windows|Useful Setup) Developer Ergonomics >>>")) { $psShortcuts = $true }
+
+    $wtSettingsPaths = Get-WindowsTerminalSettingsPaths
+    $termDup = $false
+    foreach ($wtSettings in $wtSettingsPaths) {
+        if (Test-Path -LiteralPath $wtSettings) {
+            $rawWt = Get-Content -LiteralPath $wtSettings -Raw
+            $cleanWt = Remove-JsonComments $rawWt
+            if ($cleanWt -match "duplicateTab") {
+                $termDup = $true
+                break
+            }
+        }
+    }
+    $isCtrlShiftCopyPaste = (Get-TerminalCopyPasteConfigured)
+    $isDevIndexExcluded = $true # Hard to read from COM, default to true
+
+    # Windows Update
+    $noAutoReboot = ((Get-RegValSafe -KeyPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -ValName "NoAutoRebootWithLoggedOnUsers") -eq 1)
+    $excludeDrivers = ((Get-RegValSafe -KeyPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" -ValName "ExcludeWUDriversInQualityUpdate") -eq 1)
+
+    # Network
+    $secureDnsProvider = "off"
+    if (Get-Command Get-DnsClientServerAddress -ErrorAction SilentlyContinue) {
+        $dnsServers = (Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object { $_.ServerAddresses }).ServerAddresses
+        if ($dnsServers -contains "1.1.1.1" -or $dnsServers -contains "1.0.0.1") {
+            $secureDnsProvider = "cloudflare"
+        } elseif ($dnsServers -contains "9.9.9.9" -or $dnsServers -contains "149.112.112.112") {
+            $secureDnsProvider = "quad9"
+        }
+    }
+
+    function To-YBool($b) { if ($b) { "true" } else { "false" } }
+
+    $exportDir = Split-Path -Parent $OutputPath
+    if ($exportDir -and -not (Test-Path -LiteralPath $exportDir)) {
+        $null = New-Item -ItemType Directory -Path $exportDir -Force
+    }
+
+    $yaml = @"
+# ==============================================================================
+# Sane Windows - Windows Quality-of-Life & Performance Configuration
+# Exported from machine: $env:COMPUTERNAME on $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+# ==============================================================================
+# Edit any setting below (true/false) and run '.\setup.ps1'.
+# A snapshot of all your settings is saved before ANY change is made, so you
+# can revert anytime using '.\setup.ps1 -Revert'.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Privacy & Anti-Telemetry (Stop Windows Tracking)
+# ------------------------------------------------------------------------------
+privacy:
+  # Restricts diagnostic data collection to the minimum security level
+  disable_telemetry: $(To-YBool $isTelemetryDisabled)
+
+  # Disables advertising ID, tracking across apps, and tailored experiences
+  disable_advertising_id: $(To-YBool $isAdIdDisabled)
+
+  # Disables Bing/web search results inside Start Menu search (pure local search)
+  disable_bing_search: $(To-YBool $isBingDisabled)
+
+  # Stops collecting and uploading Timeline / activity history
+  disable_activity_history: $(To-YBool $isActDisabled)
+
+  # Disables feedback popups ("How likely are you to recommend Windows...")
+  disable_feedback_prompts: $(To-YBool $isFeedbackDisabled)
+
+  # Disables background telemetry and customer experience scheduled tasks
+  disable_telemetry_tasks: $(To-YBool $isTelemetryTasksDisabled)
+
+  # Disables Suggested Actions (clipboard tracking for numbers and dates)
+  disable_suggested_actions: $(To-YBool $isSuggestedActionsDisabled)
+
+  # Disables Connected User Experiences and Telemetry (DiagTrack) service
+  disable_diagtrack_service: $(To-YBool $isDiagTrackDisabled)
+
+
+# ------------------------------------------------------------------------------
+# 2. File Explorer & Navigation Sanity
+# ------------------------------------------------------------------------------
+explorer:
+  # Show file extensions (.py, .exe, .json, .txt, etc.)
+  show_file_extensions: $(To-YBool $showExt)
+
+  # Show hidden files, folders, and drives (AppData, .git, etc.)
+  show_hidden_files: $(To-YBool $showHidden)
+
+  # Open File Explorer directly to "This PC" instead of "Home / Quick Access"
+  launch_to_this_pc: $(To-YBool $launchThisPC)
+
+  # Displays the full file system path in Explorer title bars
+  show_full_path_in_title: $(To-YBool $showFullPath)
+
+  # Displays seconds in the taskbar system clock
+  show_seconds_in_clock: $(To-YBool $showSeconds)
+
+  # Adds "Open with Code" to right-click context menu for folders and files
+  add_open_with_code: $(To-YBool $hasVsCodeMenu)
+
+  # Adds "Open in Windows Terminal" to right-click context menu for folders and backgrounds
+  add_open_in_terminal: $(To-YBool $hasTerminalMenu)
+
+  # Windows 11 (23H2+): Enables "End Task" on taskbar app right-click menu
+  enable_taskbar_end_task: $(To-YBool $isTaskbarEndTask)
+
+  # Disables web search highlights, cartoons, and doodles inside the taskbar search box
+  disable_search_highlights: $(To-YBool $isSearchHighlightsDisabled)
+
+  # Prevents "Search the Microsoft Store for an app" popup when opening unknown file types
+  disable_store_app_prompt: $(To-YBool $isStorePromptDisabled)
+
+  # Disables lock screen rotating spotlights, ads, fun facts, and tips
+  disable_lock_screen_ads: $(To-YBool $isLockScreenAdsDisabled)
+
+  # Disables Snap Assist popups (multi-window thumbnail suggestions & flyouts when snapping)
+  disable_snap_assist_popups: $(To-YBool $isSnapAssistDisabled)
+
+  # Disables multi-monitor cursor sticky corners (allows smooth mouse transitions between displays)
+  disable_mouse_sticky_corners: $(To-YBool $isMouseStickyCornersDisabled)
+
+
+# ------------------------------------------------------------------------------
+# 3. Startup Speed & System Performance
+# ------------------------------------------------------------------------------
+performance:
+  # Removes the built-in artificial startup delay for desktop apps
+  disable_startup_delay: $(To-YBool $disableDelay)
+
+  # Stops Microsoft Edge from pre-launching and idling in the background
+  disable_edge_background_tasks: $(To-YBool $disableEdge)
+
+  # Disables Fast Startup (prevents hibernation-related kernel state corruption)
+  disable_fast_startup: $(To-YBool $disableFastStart)
+
+  # Unlocks the hidden Windows "Ultimate Performance" power scheme
+  unlock_ultimate_performance: $(To-YBool $isUltimateUnlocked)
+
+  # Enables Hardware Accelerated GPU Scheduling
+  enable_hardware_gpu_scheduling: $(To-YBool $isHwGpuEnabled)
+
+
+# ------------------------------------------------------------------------------
+# 4. UI Cleanliness & De-bloat
+# ------------------------------------------------------------------------------
+ui_debloat:
+  # System-wide dark mode for Windows OS and apps
+  enable_dark_mode: $(To-YBool $isDarkMode)
+
+  # Windows 11: Restores classic Windows 10 right-click context menu (no "Show more options")
+  classic_context_menu: $(To-YBool $classicContext)
+
+  # Windows 11: Reverts the centered taskbar back to the classic left-aligned position
+  left_align_taskbar: $(To-YBool $isTaskbarLeft)
+
+  # Disables Aero Shake (preventing all windows from minimizing when accidentally shaking a title bar)
+  disable_aero_shake: $(To-YBool $isAeroShakeDisabled)
+
+  # Hides the Copilot button from the taskbar
+  hide_taskbar_copilot_button: $(To-YBool $hideCopilot)
+
+  # Hides the Task View (virtual desktops) button from the taskbar
+  hide_taskbar_task_view: $(To-YBool $hideTaskView)
+
+  # Hides the Widgets / Weather button from the taskbar
+  hide_taskbar_widgets: $(To-YBool $hideWidgets)
+
+  # Disables Widgets board from opening on hover
+  disable_widgets_hover: $(To-YBool $disableWidgetsHover)
+
+  # Disables Recommended section in Start Menu (apps and files)
+  disable_start_recommendations: $(To-YBool $disableStartRecs)
+
+  # Silences tips, tricks, suggested content, and promotional notifications
+  silence_tips_and_suggestions: $(To-YBool $silenceTips)
+
+  # Disables Sticky Keys, Toggle Keys, and Filter Keys shortcut popups (5x Shift, etc.)
+  disable_sticky_keys_popup: $(To-YBool $disableSticky)
+
+  # Automatically uninstalls pre-installed promotional junk apps
+  remove_bloatware_apps: false
+
+  # List of app packages to remove if installed
+  bloatware_list:
+    - Microsoft.BingNews
+    - Microsoft.BingWeather
+    - Microsoft.GetHelp
+    - Microsoft.Getstarted
+    - Microsoft.MicrosoftSolitaireCollection
+    - Microsoft.SkypeApp
+    - Microsoft.Todos
+    - Microsoft.ZuneVideo
+    - Clipchamp.Clipchamp
+    - ByteDancePte.Ltd.TikTok
+    - Disney.37853FC2267DE
+    - SpotifyAB.SpotifyMusic
+
+
+# ------------------------------------------------------------------------------
+# 5. Developer & Terminal Ergonomics
+# ------------------------------------------------------------------------------
+developer:
+  # Enables Windows Developer Mode (sideloading and advanced dev features)
+  enable_developer_mode: $(To-YBool $isDevMode)
+
+  # Enables Win32 Long Path support (>260 character paths for Python/Node)
+  enable_long_paths: $(To-YBool $enableLongPaths)
+
+  # Configures git global core.autocrlf to true (avoids line-ending issues)
+  configure_git_autocrlf: $(To-YBool $gitCrlf)
+
+  # Adds PowerShell aliases ('which', 'll') and PSReadLine prediction autocomplete
+  enable_powershell_shortcuts: $(To-YBool $psShortcuts)
+
+  # Binds Ctrl+Shift+D in Terminal and installs OSC 9;9 CWD tracker
+  enable_terminal_duplicate_tab: $(To-YBool $termDup)
+
+  # Requires Ctrl+Shift+C to copy and Ctrl+Shift+V to paste in Terminal & PowerShell
+  require_ctrl_shift_copy_paste: $(To-YBool $isCtrlShiftCopyPaste)
+
+  # Excludes developer directories (node_modules, .venv, etc.) from Windows Search index
+  exclude_dev_folders_from_search: $(To-YBool $isDevIndexExcluded)
+
+
+# ------------------------------------------------------------------------------
+# 6. Windows Update Control
+# ------------------------------------------------------------------------------
+windows_update:
+  # Prevents Windows from automatically rebooting for updates while a user is logged in
+  no_auto_restart_logged_on: $(To-YBool $noAutoReboot)
+
+  # Excludes third-party driver updates from routine Windows Updates (prevents GPU driver overwrites)
+  exclude_drivers: $(To-YBool $excludeDrivers)
+
+# ------------------------------------------------------------------------------
+# 7. Network Configuration
+# ------------------------------------------------------------------------------
+network:
+  # Encrypted DNS (DoH) configuration ('cloudflare' | 'quad9' | 'off')
+  secure_dns_provider: '$secureDnsProvider'
+"@
+
+    [System.IO.File]::WriteAllText($OutputPath, $yaml, [System.Text.Encoding]::UTF8)
+    Write-Host " [OK] Current machine configuration exported to:" -ForegroundColor Green
+    Write-Host "      $OutputPath`n" -ForegroundColor Cyan
+    Write-Host " To use this as your active configuration, run:" -ForegroundColor Gray
+    Write-Host "      Copy-Item `"$OutputPath`" `"$ScriptDir\config.yaml`"`n" -ForegroundColor Yellow
+}
+
+
+
+# --- Snapshot Engine ---
+$SnapshotsDir = Join-Path $ScriptDir "snapshots"
+if (-not (Test-Path $SnapshotsDir)) {
+    $null = New-Item -ItemType Directory -Path $SnapshotsDir -Force
+}
+
+function Compare-SystemSnapshots {
+    param([string]$SnapshotA, [string]$SnapshotB)
+    $a = Get-Content $SnapshotA -Raw | ConvertFrom-Json
+    $b = Get-Content $SnapshotB -Raw | ConvertFrom-Json
+    $keys = @($a.registry.PSObject.Properties.Name; $b.registry.PSObject.Properties.Name) | Select-Object -Unique | Sort-Object
+    foreach ($k in $keys) {
+        $vA = $a.registry.$k; $vB = $b.registry.$k
+        if ($vA.Existed -and -not $vB.Existed) { Write-Host "[REMOVED] $k (was $($vA.Value))" -ForegroundColor Red }
+        elseif (-not $vA.Existed -and $vB.Existed) { Write-Host "[ADDED] $k (is $($vB.Value))" -ForegroundColor Green }
+        elseif ($vA.Existed -and $vB.Existed -and $vA.Value -ne $vB.Value) { Write-Host "[CHANGED] $k ($($vA.Value) -> $($vB.Value))" -ForegroundColor Yellow }
+    }
+}
+
+function Get-RegistryTargets {
+    return @(
+        # Privacy
+        @{ Section="privacy"; Key="disable_telemetry_hklm1"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"; Name="AllowTelemetry"; Type="DWord" },
+        @{ Section="privacy"; Key="disable_telemetry_hklm2"; Path="HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection"; Name="AllowTelemetry"; Type="DWord" },
+        @{ Section="privacy"; Key="advertising_id"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo"; Name="Enabled"; Type="DWord" },
+        @{ Section="privacy"; Key="tailored_experiences"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Privacy"; Name="TailoredExperiencesWithDiagnosticDataEnabled"; Type="DWord" },
+        @{ Section="privacy"; Key="bing_search_explorer"; Path="HKCU:\Software\Policies\Microsoft\Windows\Explorer"; Name="DisableSearchBoxSuggestions"; Type="DWord" },
+        @{ Section="privacy"; Key="bing_search_enabled"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Search"; Name="BingSearchEnabled"; Type="DWord" },
+        @{ Section="privacy"; Key="bing_cortana_consent"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Search"; Name="CortanaConsent"; Type="DWord" },
+        @{ Section="privacy"; Key="activity_history_feed"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"; Name="EnableActivityFeed"; Type="DWord" },
+        @{ Section="privacy"; Key="activity_history_pub"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"; Name="PublishUserActivities"; Type="DWord" },
+        @{ Section="privacy"; Key="activity_history_up"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"; Name="UploadUserActivities"; Type="DWord" },
+        @{ Section="privacy"; Key="feedback_siuf"; Path="HKCU:\Software\Microsoft\Siuf\Rules"; Name="NumberOfSIUFInPeriod"; Type="DWord" },
+        @{ Section="privacy"; Key="feedback_notif"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"; Name="DoNotShowFeedbackNotifications"; Type="DWord" },
+        @{ Section="privacy"; Key="suggested_actions"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\SmartActionPlatform\SmartClipboard"; Name="Disabled"; Type="DWord" },
+        @{ Section="privacy"; Key="diagtrack_service"; Path="HKLM:\SYSTEM\CurrentControlSet\Services\DiagTrack"; Name="Start"; Type="DWord" },
+
+        # Explorer
+        @{ Section="explorer"; Key="hide_file_ext"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="HideFileExt"; Type="DWord" },
+        @{ Section="explorer"; Key="hidden_files"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="Hidden"; Type="DWord" },
+        @{ Section="explorer"; Key="launch_to"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="LaunchTo"; Type="DWord" },
+        @{ Section="explorer"; Key="full_path_title"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\CabinetState"; Name="FullPath"; Type="DWord" },
+
+        # Performance
+        @{ Section="performance"; Key="startup_delay"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Serialize"; Name="StartupDelayInMSec"; Type="DWord" },
+        @{ Section="performance"; Key="edge_startup_boost"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Edge"; Name="StartupBoostEnabled"; Type="DWord" },
+        @{ Section="performance"; Key="edge_background_mode"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Edge"; Name="BackgroundModeEnabled"; Type="DWord" },
+        @{ Section="performance"; Key="fast_startup"; Path="HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power"; Name="HiberbootEnabled"; Type="DWord" },
+        @{ Section="performance"; Key="enable_hardware_gpu_scheduling"; Path="HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers"; Name="HwSchMode"; Type="DWord" },
+
+        # UI Debloat
+        @{ Section="ui_debloat"; Key="dark_mode_apps"; Path="HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize"; Name="AppsUseLightTheme"; Type="DWord" },
+        @{ Section="ui_debloat"; Key="dark_mode_system"; Path="HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize"; Name="SystemUsesLightTheme"; Type="DWord" },
+        @{ Section="ui_debloat"; Key="taskbar_al"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="TaskbarAl"; Type="DWord" },
+        @{ Section="ui_debloat"; Key="aero_shake"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="DisallowShaking"; Type="DWord" },
+        @{ Section="ui_debloat"; Key="copilot_button"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="ShowCopilotButton"; Type="DWord" },
+        @{ Section="ui_debloat"; Key="task_view_button"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="ShowTaskViewButton"; Type="DWord" },
+        @{ Section="ui_debloat"; Key="widgets_button"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="TaskbarDa"; Type="DWord" },
+        @{ Section="ui_debloat"; Key="widgets_hover"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="TaskbarDa"; Type="DWord" },
+        @{ Section="ui_debloat"; Key="start_recommendations"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="Start_IrisRecommendations"; Type="DWord" },
+        @{ Section="ui_debloat"; Key="content_delivery_338388"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name="SubscribedContent-338388Enabled"; Type="DWord" },
+        @{ Section="ui_debloat"; Key="content_delivery_338389"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name="SubscribedContent-338389Enabled"; Type="DWord" },
+        @{ Section="ui_debloat"; Key="content_delivery_353694"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name="SubscribedContent-353694Enabled"; Type="DWord" },
+        @{ Section="ui_debloat"; Key="content_delivery_353696"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name="SubscribedContent-353696Enabled"; Type="DWord" },
+        @{ Section="ui_debloat"; Key="content_delivery_softlanding"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name="SoftLandingEnabled"; Type="DWord" },
+        @{ Section="ui_debloat"; Key="content_delivery_syspane"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name="SystemPaneSuggestionsEnabled"; Type="DWord" },
+
+        # Explorer Additions
+        @{ Section="explorer"; Key="clock_seconds"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="ShowSecondsInSystemClock"; Type="DWord" },
+        @{ Section="explorer"; Key="taskbar_end_task"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings"; Name="TaskbarEndTask"; Type="DWord" },
+        @{ Section="explorer"; Key="search_highlights"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings"; Name="IsDynamicSearchBoxEnabled"; Type="DWord" },
+        @{ Section="explorer"; Key="store_app_prompt"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer"; Name="NoUseStoreOpenWith"; Type="DWord" },
+        @{ Section="explorer"; Key="lock_screen_overlay"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name="RotatingLockScreenOverlayEnabled"; Type="DWord" },
+        @{ Section="explorer"; Key="lock_screen_sub"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name="SubscribedContent-338387Enabled"; Type="DWord" },
+        @{ Section="explorer"; Key="snap_assist"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="SnapAssist"; Type="DWord" },
+        @{ Section="explorer"; Key="snap_assist_flyout"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="EnableSnapAssistFlyout"; Type="DWord" },
+        @{ Section="explorer"; Key="snap_bar"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name="EnableSnapBar"; Type="DWord" },
+        @{ Section="explorer"; Key="mouse_corner_clip_length"; Path="HKCU:\Control Panel\Desktop"; Name="MouseCornerClipLength"; Type="DWord" },
+
+        # UI Debloat Additions (Accessibility Hotkeys)
+        @{ Section="ui_debloat"; Key="classic_context_menu"; Path="HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32"; Name=""; Type="String" },
+        @{ Section="ui_debloat"; Key="sticky_keys"; Path="HKCU:\Control Panel\Accessibility\StickyKeys"; Name="Flags"; Type="String" },
+        @{ Section="ui_debloat"; Key="toggle_keys"; Path="HKCU:\Control Panel\Accessibility\ToggleKeys"; Name="Flags"; Type="String" },
+        @{ Section="ui_debloat"; Key="filter_keys"; Path="HKCU:\Control Panel\Accessibility\Keyboard Response"; Name="Flags"; Type="String" },
+
+        # Developer
+        @{ Section="developer"; Key="dev_mode"; Path="HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock"; Name="AllowDevelopmentWithoutDevLicense"; Type="DWord" },
+        @{ Section="developer"; Key="long_paths"; Path="HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem"; Name="LongPathsEnabled"; Type="DWord" },
+
+        # Windows Update
+        @{ Section="windows_update"; Key="no_auto_reboot"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"; Name="NoAutoRebootWithLoggedOnUsers"; Type="DWord" },
+        @{ Section="windows_update"; Key="exclude_drivers"; Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"; Name="ExcludeWUDriversInQualityUpdate"; Type="DWord" }
+    )
+}
+
+function Get-CurrentSystemState {
+    $state = [ordered]@{
+        timestamp = (Get-Date).ToString("o")
+        isAdmin   = (Test-IsAdmin)
+        registry  = [ordered]@{}
+        git       = [ordered]@{}
+        terminal  = [ordered]@{}
+        profiles  = [ordered]@{}
+    }
+
+    # Registry Settings Definitions
+    $regTargets = Get-RegistryTargets
+
+    foreach ($t in $regTargets) {
+        $regKeyId = "$($t.Path)::$($t.Name)"
+        $state.registry[$regKeyId] = @{
+            Path     = $t.Path
+            Name     = $t.Name
+            Type     = $t.Type
+            Value    = (Get-RegValSafe -KeyPath $t.Path -ValName $t.Name)
+            Existed  = ($null -ne (Get-RegValSafe -KeyPath $t.Path -ValName $t.Name))
+        }
+    }
+
+    # Context Menu States
+    $state.contextMenu = [ordered]@{
+        vscodeDirectoryBackground   = (Test-Path -LiteralPath 'HKCU:\Software\Classes\Directory\Background\shell\VSCode')
+        vscodeDirectory             = (Test-Path -LiteralPath 'HKCU:\Software\Classes\Directory\shell\VSCode')
+        vscodeFile                  = (Test-Path -LiteralPath 'HKCU:\Software\Classes\*\shell\VSCode')
+        terminalDirectoryBackground = (Test-Path -LiteralPath 'HKCU:\Software\Classes\Directory\Background\shell\wt')
+        terminalDirectory           = (Test-Path -LiteralPath 'HKCU:\Software\Classes\Directory\shell\wt')
+    }
+
+    # Classic Context Menu CLSID
+    $clsidPath = "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32"
+    $state.registry["$clsidPath::(Default)"] = @{
+        Path    = $clsidPath
+        Name    = "(Default)"
+        Type    = "String"
+        Value   = if (Test-Path -LiteralPath $clsidPath) { (Get-Item -LiteralPath $clsidPath).GetValue("") } else { $null }
+        Existed = (Test-Path -LiteralPath $clsidPath)
+    }
+
+    # Git
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        try {
+            $crlf = (git config --global core.autocrlf 2>$null)
+            $state.git["core.autocrlf"] = $crlf
+        } catch { }
+    }
+
+    # Terminal Settings
+    $wtSettingsPaths = Get-WindowsTerminalSettingsPaths
+    $state.terminal["duplicateTabBound"] = $false
+    foreach ($wtPath in $wtSettingsPaths) {
+        if (Test-Path -LiteralPath $wtPath) {
+            try {
+                $wtRaw = Get-Content -LiteralPath $wtPath -Raw
+                $cleanWt = Remove-JsonComments $wtRaw
+                if ($cleanWt -match "duplicateTab") {
+                    $state.terminal["duplicateTabBound"] = $true
+                    break
+                }
+            } catch { }
+        }
+    }
+    $state.terminal["ctrlShiftCopyPaste"] = (Get-TerminalCopyPasteConfigured)
+
+    # Power State
+    $state.power = @{
+        ultimatePerformanceUnlocked = (Test-UltimatePerformanceUnlocked)
+    }
+
+    return $state
+}
+
+function New-SystemRestorePointSafely {
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+
+    $reg = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore" -Name "DisableSR" -ErrorAction SilentlyContinue
+
+    if ($null -ne $reg -and $reg.DisableSR -eq 1) {
+        Write-Warn "System Restore is disabled on C:. Skipping restore point."
+        return
+    }
+
+    if ($PSCmdlet.ShouldProcess("Computer", "Create System Restore Point")) {
+        try {
+            Checkpoint-Computer -Description 'SaneWindows Pre-Setup' -RestorePointType 'MODIFY_SETTINGS' -ErrorAction Stop
+            Write-Success "System restore point created successfully."
+        } catch {
+            Write-Warn "Failed to create system restore point: $_"
+        }
+    }
+}
+
+
+function Save-Snapshot {
+    param($State)
+    $ts = (Get-Date).ToString("yyyyMMdd_HHmmss")
+    $snapshotFile = Join-Path $SnapshotsDir "snapshot_$ts.json"
+    $latestFile   = Join-Path $SnapshotsDir "latest.json"
+
+    $json = $State | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText($snapshotFile, $json, [System.Text.Encoding]::UTF8)
+    [System.IO.File]::WriteAllText($latestFile, $json, [System.Text.Encoding]::UTF8)
+    return $snapshotFile
+}
+
+# Human-readable setting descriptions
+function Get-HumanReadableSettingDescription {
+    param(
+        [string]$Category,
+        [string]$SettingName
+    )
+    $descriptions = @{
+        "privacy.disable_telemetry_policies"        = "Disable Windows telemetry policies"
+        "privacy.disable_telemetry_system"          = "Disable Windows telemetry data collection"
+        "privacy.advertising_id"                    = "Disable advertising ID tracking"
+        "privacy.tailored_experiences"              = "Disable tailored experiences with diagnostic data"
+        "privacy.disable_search_box_suggestions"    = "Disable search box web suggestions"
+        "privacy.bing_search_enabled"               = "Disable Bing search in Start Menu"
+        "privacy.cortana_consent"                   = "Disable Cortana search consent"
+        "privacy.activity_feed"                     = "Disable Windows activity feed tracking"
+        "privacy.publish_user_activities"           = "Disable publishing user activity history"
+        "privacy.upload_user_activities"            = "Disable uploading user activity history"
+        "privacy.siuf_period"                       = "Disable Windows customer feedback prompts"
+        "privacy.feedback_notifications"            = "Disable feedback reminder notifications"
+        "privacy.disable_suggested_actions"         = "Disable suggested actions clipboard tracking"
+        "privacy.disable_diagtrack_service"         = "Disable Connected User Experiences (DiagTrack) service"
+        "privacy.disable_telemetry_tasks"           = "Disable diagnostic and telemetry scheduled tasks"
+
+        "explorer.show_file_extensions"             = "Show file extensions for known file types"
+        "explorer.show_hidden_files"                = "Show hidden files, folders, and drives"
+        "explorer.launch_to_this_pc"                = "Open File Explorer to This PC instead of Home"
+        "explorer.show_full_path_in_title"          = "Display full directory path in Explorer title bar"
+        "explorer.show_seconds_in_clock"            = "Show seconds in taskbar system clock"
+        "explorer.add_open_with_code"               = "Add Open with Code to context menu"
+        "explorer.add_open_in_terminal"             = "Add Open in Windows Terminal to context menu"
+        "explorer.enable_taskbar_end_task"          = "Enable End Task option on taskbar app right-click"
+        "explorer.disable_search_highlights"        = "Disable search highlights and doodles on taskbar"
+        "explorer.disable_store_app_prompt"         = "Disable Search the Store dialog for unknown files"
+        "explorer.lock_screen_overlay"              = "Disable fun facts and tips on lock screen"
+        "explorer.lock_screen_sub"                  = "Disable promotional content subscriptions on lock screen"
+        "explorer.snap_assist"                      = "Disable Snap Assist suggestions when snapping windows"
+        "explorer.snap_assist_flyout"               = "Disable Snap Assist flyout suggestions"
+        "explorer.snap_bar"                         = "Disable Snap Bar popups when dragging windows"
+        "explorer.mouse_sticky_corners"             = "Disable multi-monitor mouse cursor sticky corners"
+
+        "performance.startup_delay"                 = "Disable startup delay for desktop applications"
+        "performance.edge_startup_boost"            = "Disable Microsoft Edge startup boost"
+        "performance.edge_background_mode"          = "Disable Microsoft Edge background pre-launching"
+        "performance.disable_fast_startup"          = "Disable Fast Startup hibernation state carryover"
+        "performance.unlock_ultimate_performance"   = "Unlock Ultimate Performance power plan"
+        "performance.enable_hardware_gpu_scheduling"= "Enable Hardware Accelerated GPU Scheduling"
+
+        "ui_debloat.dark_mode_apps"                 = "Enable dark mode for applications"
+        "ui_debloat.dark_mode_system"               = "Enable dark mode for Windows system"
+        "ui_debloat.classic_context_menu"           = "Restore classic Windows 10 right-click context menu"
+        "ui_debloat.left_align_taskbar"             = "Left-align taskbar buttons and Start menu"
+        "ui_debloat.disable_aero_shake"             = "Disable Aero Shake minimizing background windows"
+        "ui_debloat.hide_copilot"                   = "Hide Copilot button from taskbar"
+        "ui_debloat.hide_task_view"                 = "Hide Task View button from taskbar"
+        "ui_debloat.hide_widgets"                   = "Hide Widgets button from taskbar"
+        "ui_debloat.disable_widgets_hover"          = "Disable Widgets board opening on hover"
+        "ui_debloat.disable_start_recommendations"  = "Disable recommended section in Start Menu"
+        "ui_debloat.silence_suggestions_338388"     = "Disable suggestions in Settings"
+        "ui_debloat.silence_suggestions_338389"     = "Disable suggestions in Windows Welcome Experience"
+        "ui_debloat.silence_suggestions_353694"     = "Disable suggestions in Start Menu"
+        "ui_debloat.silence_suggestions_353696"     = "Disable suggestions in Notification Center"
+        "ui_debloat.soft_landing"                   = "Disable Windows soft-landing tips"
+        "ui_debloat.system_pane_suggestions"        = "Disable tips and suggestions in system panes"
+        "ui_debloat.remove_app"                     = "Uninstall pre-installed bloatware app"
+        "ui_debloat.disable_sticky_keys_popup"      = "Disable Sticky Keys and accessibility shortcut popups"
+
+        "developer.defender_dev_exclusions"         = "Exclude developer tools from Defender scanning"
+        "developer.enable_developer_mode"           = "Enable Windows Developer Mode"
+        "developer.enable_long_paths"               = "Enable Win32 long path support (>260 chars)"
+        "developer.git_autocrlf"                    = "Configure git core.autocrlf to true"
+        "developer.powershell_shortcuts"            = "Configure developer aliases and PSReadLine shortcuts"
+        "developer.terminal_duplicate_tab"          = "Configure duplicate tab in current working directory"
+        "developer.exclude_dev_folders_from_search" = "Exclude dev folders from Windows Search index"
+        "developer.terminal_ctrl_shift_copy_paste"  = "Require Ctrl+Shift+C/V for Terminal copy and paste"
+
+        "windows_update.no_auto_restart_logged_on"  = "Prevent automatic reboot with logged-on users"
+        "windows_update.exclude_drivers"            = "Exclude third-party drivers from Windows Update"
+
+        "network.secure_dns_provider"               = "Configure encrypted DNS (DoH) provider"
+    }
+
+    $lookupKey = "$Category.$SettingName"
+    if ($descriptions.ContainsKey($lookupKey)) {
+        return $descriptions[$lookupKey]
+    }
+    # Fallback to readable string from setting name
+    return ($SettingName -replace '_', ' ')
+}
+
+# Formats raw values into human-readable representations
+function Format-HumanReadableValue {
+    param(
+        $Value,
+        [string]$Category = "",
+        [string]$SettingName = ""
+    )
+    if ($null -eq $Value) { return "<none>" }
+    $strVal = [string]$Value
+
+    # Explicit mappings based on setting semantics
+    switch ("$Category.$SettingName") {
+        "explorer.show_file_extensions" {
+            # HideFileExt: 0 = extensions shown (true), 1 = extensions hidden (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+        "explorer.launch_to_this_pc" {
+            # LaunchTo: 1 = This PC (true), 2 = Home / Quick Access (false)
+            if ($strVal -eq "1") { return "true" }
+            if ($strVal -eq "2") { return "false" }
+        }
+        "explorer.mouse_sticky_corners" {
+            # MouseCornerClipLength: 0 = disabled (true), 6 = default enabled (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "6") { return "false" }
+        }
+        "performance.enable_hardware_gpu_scheduling" {
+            # HwSchMode: 2 = enabled (true), 1 = disabled (false)
+            if ($strVal -eq "2") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+        "privacy.disable_diagtrack_service" {
+            # Start: 4 = Disabled (true), 2 = Automatic (false)
+            if ($strVal -eq "4") { return "true" }
+            if ($strVal -eq "2") { return "false" }
+        }
+        "privacy.disable_telemetry_policies" {
+            # AllowTelemetry: 0 = Security/Disabled (true), 3 = Full (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "3") { return "false" }
+        }
+        "privacy.disable_telemetry_system" {
+            # AllowTelemetry: 0 = Security/Disabled (true), 3 = Full (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "3") { return "false" }
+        }
+        "ui_debloat.left_align_taskbar" {
+            # TaskbarAl: 0 = Left (true), 1 = Center (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+        "ui_debloat.dark_mode_apps" {
+            # AppsUseLightTheme: 0 = Dark (true), 1 = Light (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+        "ui_debloat.dark_mode_system" {
+            # SystemUsesLightTheme: 0 = Dark (true), 1 = Light (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+        "ui_debloat.hide_copilot" {
+            # ShowCopilotButton: 0 = Hidden (true), 1 = Shown (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+        "ui_debloat.hide_task_view" {
+            # ShowTaskViewButton: 0 = Hidden (true), 1 = Shown (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+        "ui_debloat.hide_widgets" {
+            # TaskbarDa: 0 = Hidden (true), 1 = Shown (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+        "ui_debloat.disable_widgets_hover" {
+            # TaskbarDa: 0 = Disabled (true), 1 = Enabled (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+        "ui_debloat.disable_start_recommendations" {
+            # Start_IrisRecommendations: 0 = Disabled (true), 1 = Enabled (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+    }
+
+    # Inverted flags: 0 = true (disabled/feature active), 1 = false
+    if ($SettingName -like "disable_*" -or $SettingName -like "silence_*") {
+        if ($strVal -eq "0") { return "true" }
+        if ($strVal -eq "1") { return "false" }
+    }
+
+    # Standard boolean flags: 1 = true, 0 = false
+    if ($strVal -eq "1" -or $strVal -eq "True") { return "true" }
+    if ($strVal -eq "0" -or $strVal -eq "False") { return "false" }
+
+    return $strVal
+}
+
+# Prompts and safely restarts File Explorer
+function Restart-ExplorerSafely {
+    param(
+        [switch]$Unattended,
+        [switch]$SkipRestart
+    )
+    if ($SkipRestart) { return }
+
+    $shouldRestart = $false
+    if ($Unattended) {
+        $shouldRestart = $true
+    } else {
+        $ans = Read-Host "`nRestart File Explorer now to apply UI and taskbar changes? [Y/n]"
+        if ($ans -match '^[Yy]$' -or $ans -eq '') {
+            $shouldRestart = $true
+        } else {
+            Write-Warn "File Explorer was not restarted. Settings won't apply until you restart File Explorer or sign out."
+        }
+    }
+
+    if ($shouldRestart) {
+        Write-Step "Restarting File Explorer to apply UI & Explorer changes..."
+        Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
+    }
+}
+
+# --- Config Export Execution ---
+if ($ExportConfig) {
+    $targetExport = if ($ExportPath) { $ExportPath } else { Join-Path $ScriptDir "config.exported.yaml" }
+    Export-CurrentConfiguration -OutputPath $targetExport
+    exit 0
+}
+
+# --- Revert Engine ---
+if ($ListSnapshots) {
+    Write-Header "Saved Setting Snapshots"
+    $files = Get-ChildItem -Path $SnapshotsDir -Filter "snapshot_*.json" | Sort-Object LastWriteTime -Descending
+    if ($files.Count -eq 0) {
+        Write-Host "No snapshots found in $SnapshotsDir" -ForegroundColor Yellow
+    } else {
+        foreach ($f in $files) {
+            Write-Host "  $($f.Name)  (Created: $($f.LastWriteTime))" -ForegroundColor Cyan
+        }
+    }
+    exit 0
+}
+
+if ($Revert) {
+    Write-Header "Reverting System Settings from Snapshot"
+    $targetSnapshot = if ($SnapshotPath) { $SnapshotPath } else { Join-Path $SnapshotsDir "latest.json" }
+
+    if (-not (Test-Path $targetSnapshot)) {
+        Write-Host "Snapshot file not found: $targetSnapshot" -ForegroundColor Red
+        exit 1
+    }
+
+    Write-Info "Loading snapshot: $targetSnapshot"
+    $snapData = Get-Content $targetSnapshot -Raw | ConvertFrom-Json
+
+    # Save a safety snapshot before reverting
+    $safetySnap = Save-Snapshot -State (Get-CurrentSystemState)
+    Write-Info "Pre-revert safety snapshot saved: $safetySnap"
+
+    $revertedCount = 0
+    $explorerNeedsRestart = $false
+
+    $registryCache = @{}
+
+    # Revert Registry
+    foreach ($prop in $snapData.registry.PSObject.Properties) {
+        $item = $prop.Value
+        $path = $item.Path
+        $name = $item.Name
+        $existed = $item.Existed
+        $origVal = $item.Value
+
+        # Special case: Classic Context Menu
+        if ($path -like "*86ca1aa0-34aa-4e8b-a509-50c905bae2a2*") {
+            if (-not $existed -and (Test-Path "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}")) {
+                Remove-Item -Path "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}" -Recurse -Force
+                Write-Changed "Classic Context Menu" "Classic" "Windows 11 Default"
+                $revertedCount++
+                $explorerNeedsRestart = $true
+            }
+            continue
+        }
+
+        # Check HKLM elevation
+        if ($path -like "HKLM:*" -and -not (Test-IsAdmin)) {
+            Write-Skipped "$path::$name" "Requires Administrator elevation to revert"
+            continue
+        }
+
+        # Cache key properties to avoid N+1 queries
+        if (-not $registryCache.Contains($path)) {
+            if (Test-Path -LiteralPath $path) {
+                $registryCache[$path] = Get-ItemProperty -LiteralPath $path -ErrorAction SilentlyContinue
+            } else {
+                $registryCache[$path] = $null
+            }
+        }
+        $keyProps = $registryCache[$path]
+
+        # Ignore PowerShell intrinsic properties
+        $isIntrinsic = @("PSPath", "PSParentPath", "PSChildName", "PSDrive", "PSProvider") -contains $name
+
+        if (-not $existed) {
+            $currVal = if ($null -ne $keyProps -and -not $isIntrinsic) { $keyProps.$name } else { $null }
+            if ($null -ne $currVal) {
+                Remove-RegValSafe -KeyPath $path -ValName $name
+                Write-Changed "$path::$name" "Modified" "Removed (did not originally exist)"
+                $revertedCount++
+                if ($path -like "*Explorer*") { $explorerNeedsRestart = $true }
+            }
+        } else {
+            $currVal = if ($null -ne $keyProps -and -not $isIntrinsic) { $keyProps.$name } else { $null }
+            if ($currVal -ne $origVal) {
+                Set-RegValSafe -KeyPath $path -ValName $name -Value $origVal -Type $item.Type
+                Write-Changed "$path::$name" "$currVal" "$origVal"
+                $revertedCount++
+                if ($path -like "*Explorer*") { $explorerNeedsRestart = $true }
+            }
+        }
+    }
+
+    # Revert Git
+    if ($snapData.git) {
+        if ($snapData.git.'core.autocrlf') {
+            git config --global core.autocrlf $snapData.git.'core.autocrlf'
+            Write-Changed "git core.autocrlf" "Modified" "$($snapData.git.'core.autocrlf')"
+            $revertedCount++
+        } else {
+            git config --global --unset core.autocrlf 2>$null
+            Write-Changed "git core.autocrlf" "Modified" "Unset"
+            $revertedCount++
+        }
+    }
+
+    # Revert Context Menus
+    if ($snapData.contextMenu) {
+        if ($snapData.contextMenu.vscode) {
+            if (-not $snapData.contextMenu.vscode.directoryBackground) {
+                Remove-UserContextMenu -SubKeyPath "Software\Classes\Directory\Background\shell\VSCode"
+            }
+            if (-not $snapData.contextMenu.vscode.directory) {
+                Remove-UserContextMenu -SubKeyPath "Software\Classes\Directory\shell\VSCode"
+            }
+            if (-not $snapData.contextMenu.vscode.file) {
+                Remove-UserContextMenu -SubKeyPath "Software\Classes\*\shell\VSCode"
+            }
+            Remove-UserContextMenu -SubKeyPath "Software\Classes\Drive\shell\VSCode"
+            Write-Changed "Context Menu" "Open with Code" "Modified" "Restored from snapshot"
+            $revertedCount++
+        }
+        if ($snapData.contextMenu.terminal) {
+            if (-not $snapData.contextMenu.terminal.directoryBackground) {
+                Remove-UserContextMenu -SubKeyPath "Software\Classes\Directory\Background\shell\wt"
+            }
+            if (-not $snapData.contextMenu.terminal.directory) {
+                Remove-UserContextMenu -SubKeyPath "Software\Classes\Directory\shell\wt"
+            }
+            Remove-UserContextMenu -SubKeyPath "Software\Classes\Drive\shell\wt"
+            Write-Changed "Context Menu" "Open in Windows Terminal" "Modified" "Restored from snapshot"
+            $revertedCount++
+        }
+    }
+
+    # Revert Terminal Copy/Paste Keybindings
+    if ($snapData.terminal -and $snapData.terminal.ctrlShiftCopyPaste -eq $false) {
+        Set-TerminalCopyPasteKeybindings -Enable $false
+        Write-Changed "Windows Terminal" "ctrlShiftCopyPaste" "Modified" "Restored to defaults"
+        $revertedCount++
+    }
+
+    # Revert PowerShell profiles
+    $null = & "$ScriptDir\setup_duplicate_tab.ps1" -Uninstall
+    Write-Info "PowerShell profile duplicate tab hooks reverted."
+
+    if ($explorerNeedsRestart) {
+        Restart-ExplorerSafely -Unattended:$Yes -SkipRestart:$NoExplorerRestart
+    }
+
+    Write-Host "`nReversion complete! $revertedCount settings restored to snapshot state." -ForegroundColor Green
+    exit 0
+}
+
+# --- Main Setup Flow ---
+Write-Header "Sane Windows: Windows QOL & Machine Configuration"
+
+if (-not (Test-Path $ConfigPath)) {
+    Write-Host "Configuration file not found: $ConfigPath" -ForegroundColor Red
+    exit 1
+}
+
+Write-Info "Loading configuration from: $ConfigPath"
+$configContent = Get-Content $ConfigPath -Raw
+$config = ConvertFrom-SimpleYaml $configContent
+[void](Test-ConfigFile -Config $config)
+
+$isAdmin = Test-IsAdmin
+if (-not $isAdmin) {
+    Write-Warn "Running without Administrator privileges."
+    Write-Info "Per-user tweaks (Explorer, Taskbar, Bing Search, Terminal, PowerShell) will apply fully."
+    Write-Info "Machine-wide tweaks (Fast Startup, Long Paths, Machine Telemetry) require Admin and will be skipped."
+}
+
+# Collect planned changes
+$script:pendingChanges = [System.Collections.ArrayList]@()
+
+function Register-PlannedChange {
+    param(
+        [string]$Category,
+        [string]$SettingName,
+        [string]$CurrentValue,
+        [string]$DesiredValue,
+        [scriptblock]$Action,
+        $Arguments = @(),
+        [bool]$AffectsExplorer = $false
+    )
+    $null = $script:pendingChanges.Add([PSCustomObject]@{
+        Category        = $Category
+        Setting         = $SettingName
+        CurrentValue    = $CurrentValue
+        DesiredValue    = $DesiredValue
+        Action          = $Action
+        Arguments       = $Arguments
+        AffectsExplorer = $AffectsExplorer
+    })
+}
+
+function Check-RegChange {
+    param(
+        [string]$Category,
+        [string]$SettingName,
+        [string]$RegPath,
+        [string]$ValName,
+        $DesiredValue,
+        [string]$Type = "DWord"
+    )
+    $currVal = Get-RegValSafe -KeyPath $RegPath -ValName $ValName
+
+    # Check if requires admin
+    if (($RegPath -like "HKLM:*" -or $RegPath -like "*\Policies\*") -and -not $isAdmin) {
+        if ($VerboseOutput) {
+            Write-Skipped "$Category.$SettingName" "Requires Administrator elevation"
+        }
+        return
+    }
+
+    if ($currVal -ne $DesiredValue) {
+        $displayOld = if ($null -eq $currVal) { "<none>" } else { "$currVal" }
+        $affectsExp = ($RegPath -like "*Explorer*" -or $RegPath -like "*Search*")
+        Register-PlannedChange -Category $Category -SettingName $SettingName -CurrentValue $displayOld -DesiredValue "$DesiredValue" -AffectsExplorer $affectsExp -Arguments @($RegPath, $ValName, $DesiredValue, $Type) -Action {
+            param($kp, $vn, $dv, $tp)
+            Set-RegValSafe -KeyPath $kp -ValName $vn -Value $dv -Type $tp
+        }
+    } else {
+        Write-Unchanged "$Category.$SettingName" "$DesiredValue"
+    }
+}
+
+# -------------------------------------------------------------
+# 1. Privacy & Anti-Telemetry Settings
+# -------------------------------------------------------------
+Write-Step "Inspecting Privacy & Anti-Telemetry Settings..."
+
+if ($null -ne $config['privacy']['disable_telemetry']) {
+    $teleVal = if ($config['privacy']['disable_telemetry']) { 0 } else { 3 }
+    Check-RegChange -Category "privacy" -SettingName "disable_telemetry_policies" -RegPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -ValName "AllowTelemetry" -DesiredValue $teleVal
+    Check-RegChange -Category "privacy" -SettingName "disable_telemetry_system" -RegPath "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" -ValName "AllowTelemetry" -DesiredValue $teleVal
+}
+
+if ($null -ne $config['privacy']['disable_advertising_id']) {
+    $adVal = if ($config['privacy']['disable_advertising_id']) { 0 } else { 1 }
+    Check-RegChange -Category "privacy" -SettingName "advertising_id" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" -ValName "Enabled" -DesiredValue $adVal
+    Check-RegChange -Category "privacy" -SettingName "tailored_experiences" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Privacy" -ValName "TailoredExperiencesWithDiagnosticDataEnabled" -DesiredValue $adVal
+}
+
+if ($null -ne $config['privacy']['disable_bing_search']) {
+    $bingBox = if ($config['privacy']['disable_bing_search']) { 1 } else { 0 }
+    $bingVal = if ($config['privacy']['disable_bing_search']) { 0 } else { 1 }
+    Check-RegChange -Category "privacy" -SettingName "disable_search_box_suggestions" -RegPath "HKCU:\Software\Policies\Microsoft\Windows\Explorer" -ValName "DisableSearchBoxSuggestions" -DesiredValue $bingBox
+    Check-RegChange -Category "privacy" -SettingName "bing_search_enabled" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" -ValName "BingSearchEnabled" -DesiredValue $bingVal
+    Check-RegChange -Category "privacy" -SettingName "cortana_consent" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" -ValName "CortanaConsent" -DesiredValue $bingVal
+}
+
+if ($null -ne $config['privacy']['disable_activity_history']) {
+    $actVal = if ($config['privacy']['disable_activity_history']) { 0 } else { 1 }
+    Check-RegChange -Category "privacy" -SettingName "activity_feed" -RegPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" -ValName "EnableActivityFeed" -DesiredValue $actVal
+    Check-RegChange -Category "privacy" -SettingName "publish_user_activities" -RegPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" -ValName "PublishUserActivities" -DesiredValue $actVal
+    Check-RegChange -Category "privacy" -SettingName "upload_user_activities" -RegPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" -ValName "UploadUserActivities" -DesiredValue $actVal
+}
+
+if ($null -ne $config['privacy']['disable_feedback_prompts']) {
+    $siufVal = if ($config['privacy']['disable_feedback_prompts']) { 0 } else { 1 }
+    $fbNotif = if ($config['privacy']['disable_feedback_prompts']) { 1 } else { 0 }
+    Check-RegChange -Category "privacy" -SettingName "siuf_period" -RegPath "HKCU:\Software\Microsoft\Siuf\Rules" -ValName "NumberOfSIUFInPeriod" -DesiredValue $siufVal
+    Check-RegChange -Category "privacy" -SettingName "feedback_notifications" -RegPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -ValName "DoNotShowFeedbackNotifications" -DesiredValue $fbNotif
+}
+
+if ($null -ne $config['privacy']['disable_suggested_actions']) {
+    $suggestedVal = if ($config['privacy']['disable_suggested_actions']) { 1 } else { 0 }
+    Check-RegChange -Category "privacy" -SettingName "disable_suggested_actions" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\SmartActionPlatform\SmartClipboard" -ValName "Disabled" -DesiredValue $suggestedVal
+}
+
+if ($null -ne $config['privacy']['disable_diagtrack_service']) {
+    # 4 = Disabled, 2 = Automatic
+    $diagTrackVal = if ($config['privacy']['disable_diagtrack_service']) { 4 } else { 2 }
+    Check-RegChange -Category "privacy" -SettingName "disable_diagtrack_service" -RegPath "HKLM:\SYSTEM\CurrentControlSet\Services\DiagTrack" -ValName "Start" -DesiredValue $diagTrackVal
+}
+
+if ($config['privacy']['disable_telemetry_tasks']) {
+    if (-not $isAdmin) {
+        if ($VerboseOutput) {
+            Write-Skipped "privacy.disable_telemetry_tasks" "Requires Administrator elevation"
+        }
+    } else {
+        $tasksToDisable = @(
+            @{ Path="\Microsoft\Windows\Application Experience\"; Name="Microsoft Compatibility Appraiser" },
+            @{ Path="\Microsoft\Windows\Application Experience\"; Name="Microsoft Compatibility Appraiser Exp" },
+            @{ Path="\Microsoft\Windows\Application Experience\"; Name="ProgramDataUpdater" },
+            @{ Path="\Microsoft\Windows\Customer Experience Improvement Program\"; Name="Consolidator" },
+            @{ Path="\Microsoft\Windows\Customer Experience Improvement Program\"; Name="UsbCeip" },
+            @{ Path="\Microsoft\Windows\DiskDiagnostic\"; Name="Microsoft-Windows-DiskDiagnosticDataCollector" }
+        )
+        $activeTasks = [System.Collections.ArrayList]@()
+        foreach ($t in $tasksToDisable) {
+            $taskObj = Get-ScheduledTask -TaskPath $t.Path -TaskName $t.Name -ErrorAction SilentlyContinue
+            if ($null -ne $taskObj -and $taskObj.State -ne "Disabled") {
+                $null = $activeTasks.Add($t)
+            }
+        }
+        if ($activeTasks.Count -gt 0) {
+            Register-PlannedChange -Category "privacy" -SettingName "disable_telemetry_tasks" -CurrentValue "$($activeTasks.Count) tasks active" -DesiredValue "Disable $($activeTasks.Count) tasks" -AffectsExplorer $false -Action {
+                foreach ($at in $activeTasks) {
+                    $task = Get-ScheduledTask -TaskPath $at.Path -TaskName $at.Name -ErrorAction SilentlyContinue
+                    if ($null -ne $task -and $task.State -ne "Disabled") {
+                        $null = Disable-ScheduledTask -TaskPath $at.Path -TaskName $at.Name -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+        } else {
+            Write-Unchanged "privacy.disable_telemetry_tasks" "Disabled"
+        }
+    }
+}
+
+# -------------------------------------------------------------
+# 2. Explorer & Navigation Sanity
+# -------------------------------------------------------------
+Write-Step "Inspecting File Explorer & Navigation Settings..."
+
+if ($null -ne $config['explorer']['show_file_extensions']) {
+    $extVal = if ($config['explorer']['show_file_extensions']) { 0 } else { 1 }
+    Check-RegChange -Category "explorer" -SettingName "show_file_extensions" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "HideFileExt" -DesiredValue $extVal
+}
+
+if ($null -ne $config['explorer']['show_hidden_files']) {
+    $hiddenVal = if ($config['explorer']['show_hidden_files']) { 1 } else { 2 }
+    Check-RegChange -Category "explorer" -SettingName "show_hidden_files" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "Hidden" -DesiredValue $hiddenVal
+}
+
+if ($null -ne $config['explorer']['launch_to_this_pc']) {
+    $launchVal = if ($config['explorer']['launch_to_this_pc']) { 1 } else { 2 }
+    Check-RegChange -Category "explorer" -SettingName "launch_to_this_pc" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "LaunchTo" -DesiredValue $launchVal
+}
+
+if ($null -ne $config['explorer']['show_full_path_in_title']) {
+    $fullPathVal = if ($config['explorer']['show_full_path_in_title']) { 1 } else { 0 }
+    Check-RegChange -Category "explorer" -SettingName "show_full_path_in_title" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\CabinetState" -ValName "FullPath" -DesiredValue $fullPathVal
+}
+
+if ($null -ne $config['explorer']['show_seconds_in_clock']) {
+    $secVal = if ($config['explorer']['show_seconds_in_clock']) { 1 } else { 0 }
+    Check-RegChange -Category "explorer" -SettingName "show_seconds_in_clock" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "ShowSecondsInSystemClock" -DesiredValue $secVal
+}
+
+if ($null -ne $config['explorer']['add_open_with_code']) {
+    $codePath = Find-VsCodePath
+    $hasVsCodeMenu = (Test-Path -LiteralPath "HKCU:\Software\Classes\Directory\Background\shell\VSCode")
+    if ($config['explorer']['add_open_with_code']) {
+        if (-not $codePath) {
+            Write-Skipped "explorer.add_open_with_code" "VS Code executable not found on system"
+        } elseif (-not $hasVsCodeMenu) {
+            Register-PlannedChange -Category "explorer" -SettingName "add_open_with_code" -CurrentValue "<none>" -DesiredValue "Add Open with Code to context menu" -AffectsExplorer $false -Arguments @($codePath) -Action {
+                param($cp)
+                Set-UserContextMenu -SubKeyPath "Software\Classes\Directory\Background\shell\VSCode" -MenuText "Open with Code" -IconPath $cp -CommandStr "`"$cp`" `"%V`""
+                Set-UserContextMenu -SubKeyPath "Software\Classes\Directory\shell\VSCode" -MenuText "Open with Code" -IconPath $cp -CommandStr "`"$cp`" `"%1`""
+                Set-UserContextMenu -SubKeyPath "Software\Classes\*\shell\VSCode" -MenuText "Open with Code" -IconPath $cp -CommandStr "`"$cp`" `"%1`""
+                Set-UserContextMenu -SubKeyPath "Software\Classes\Drive\shell\VSCode" -MenuText "Open with Code" -IconPath $cp -CommandStr "`"$cp`" `"%1`""
+            }
+        } else {
+            Write-Unchanged "explorer.add_open_with_code" "Registered"
+        }
+    } else {
+        if ($hasVsCodeMenu) {
+            Register-PlannedChange -Category "explorer" -SettingName "add_open_with_code" -CurrentValue "Registered" -DesiredValue "Remove Open with Code from context menu" -AffectsExplorer $false -Action {
+                Remove-UserContextMenu -SubKeyPath "Software\Classes\Directory\Background\shell\VSCode"
+                Remove-UserContextMenu -SubKeyPath "Software\Classes\Directory\shell\VSCode"
+                Remove-UserContextMenu -SubKeyPath "Software\Classes\*\shell\VSCode"
+                Remove-UserContextMenu -SubKeyPath "Software\Classes\Drive\shell\VSCode"
+            }
+        } else {
+            Write-Unchanged "explorer.add_open_with_code" "Not Registered"
+        }
+    }
+}
+
+if ($null -ne $config['explorer']['add_open_in_terminal']) {
+    $wtPath = Find-WindowsTerminalPath
+    $hasWtMenu = (Test-Path -LiteralPath "HKCU:\Software\Classes\Directory\Background\shell\wt")
+    if ($config['explorer']['add_open_in_terminal']) {
+        if (-not $hasWtMenu) {
+            Register-PlannedChange -Category "explorer" -SettingName "add_open_in_terminal" -CurrentValue "<none>" -DesiredValue "Add Open in Windows Terminal to context menu" -AffectsExplorer $false -Arguments @($wtPath) -Action {
+                param($wp)
+                Set-UserContextMenu -SubKeyPath "Software\Classes\Directory\Background\shell\wt" -MenuText "Open in Windows Terminal" -IconPath $wp -CommandStr "`"$wp`" -d `"%V`""
+                Set-UserContextMenu -SubKeyPath "Software\Classes\Directory\shell\wt" -MenuText "Open in Windows Terminal" -IconPath $wp -CommandStr "`"$wp`" -d `"%1`""
+                Set-UserContextMenu -SubKeyPath "Software\Classes\Drive\shell\wt" -MenuText "Open in Windows Terminal" -IconPath $wp -CommandStr "`"$wp`" -d `"%1`""
+            }
+        } else {
+            Write-Unchanged "explorer.add_open_in_terminal" "Registered"
+        }
+    } else {
+        if ($hasWtMenu) {
+            Register-PlannedChange -Category "explorer" -SettingName "add_open_in_terminal" -CurrentValue "Registered" -DesiredValue "Remove Open in Windows Terminal from context menu" -AffectsExplorer $false -Action {
+                Remove-UserContextMenu -SubKeyPath "Software\Classes\Directory\Background\shell\wt"
+                Remove-UserContextMenu -SubKeyPath "Software\Classes\Directory\shell\wt"
+                Remove-UserContextMenu -SubKeyPath "Software\Classes\Drive\shell\wt"
+            }
+        } else {
+            Write-Unchanged "explorer.add_open_in_terminal" "Not Registered"
+        }
+    }
+}
+
+if ($null -ne $config['explorer']['enable_taskbar_end_task']) {
+    if (-not $script:IsWindows11_23H2) {
+        Write-Skipped "explorer.enable_taskbar_end_task" "Requires Windows 11 23H2 (Build 22631+) or newer"
+    } else {
+        $endTaskVal = if ($config['explorer']['enable_taskbar_end_task']) { 1 } else { 0 }
+        Check-RegChange -Category "explorer" -SettingName "enable_taskbar_end_task" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings" -ValName "TaskbarEndTask" -DesiredValue $endTaskVal
+    }
+}
+
+if ($null -ne $config['explorer']['disable_search_highlights']) {
+    $searchHighVal = if ($config['explorer']['disable_search_highlights']) { 0 } else { 1 }
+    Check-RegChange -Category "explorer" -SettingName "disable_search_highlights" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" -ValName "IsDynamicSearchBoxEnabled" -DesiredValue $searchHighVal
+}
+
+if ($null -ne $config['explorer']['disable_store_app_prompt']) {
+    $storePromptVal = if ($config['explorer']['disable_store_app_prompt']) { 1 } else { 0 }
+    Check-RegChange -Category "explorer" -SettingName "disable_store_app_prompt" -RegPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" -ValName "NoUseStoreOpenWith" -DesiredValue $storePromptVal
+}
+
+if ($null -ne $config['explorer']['disable_lock_screen_ads']) {
+    $lockAdVal = if ($config['explorer']['disable_lock_screen_ads']) { 0 } else { 1 }
+    Check-RegChange -Category "explorer" -SettingName "lock_screen_overlay" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -ValName "RotatingLockScreenOverlayEnabled" -DesiredValue $lockAdVal
+    Check-RegChange -Category "explorer" -SettingName "lock_screen_sub" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -ValName "SubscribedContent-338387Enabled" -DesiredValue $lockAdVal
+}
+
+if ($null -ne $config['explorer']['disable_snap_assist_popups']) {
+    $snapVal = if ($config['explorer']['disable_snap_assist_popups']) { 0 } else { 1 }
+    Check-RegChange -Category "explorer" -SettingName "snap_assist" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "SnapAssist" -DesiredValue $snapVal
+    Check-RegChange -Category "explorer" -SettingName "snap_assist_flyout" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "EnableSnapAssistFlyout" -DesiredValue $snapVal
+    Check-RegChange -Category "explorer" -SettingName "snap_bar" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "EnableSnapBar" -DesiredValue $snapVal
+}
+
+if ($null -ne $config['explorer']['disable_mouse_sticky_corners']) {
+    $cornerVal = if ($config['explorer']['disable_mouse_sticky_corners']) { 0 } else { 6 }
+    Check-RegChange -Category "explorer" -SettingName "mouse_sticky_corners" -RegPath "HKCU:\Control Panel\Desktop" -ValName "MouseCornerClipLength" -DesiredValue $cornerVal
+}
+
+
+# -------------------------------------------------------------
+# 3. Startup Speed & Performance
+# -------------------------------------------------------------
+Write-Step "Inspecting Startup & System Performance Settings..."
+
+if ($null -ne $config['performance']['disable_startup_delay']) {
+    $delayVal = if ($config['performance']['disable_startup_delay']) { 0 } else { 1 }
+    Check-RegChange -Category "performance" -SettingName "startup_delay" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Serialize" -ValName "StartupDelayInMSec" -DesiredValue $delayVal
+}
+
+if ($null -ne $config['performance']['disable_edge_background_tasks']) {
+    $edgeVal = if ($config['performance']['disable_edge_background_tasks']) { 0 } else { 1 }
+    Check-RegChange -Category "performance" -SettingName "edge_startup_boost" -RegPath "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -ValName "StartupBoostEnabled" -DesiredValue $edgeVal
+    Check-RegChange -Category "performance" -SettingName "edge_background_mode" -RegPath "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -ValName "BackgroundModeEnabled" -DesiredValue $edgeVal
+}
+
+if ($null -ne $config['performance']['disable_fast_startup']) {
+    $fastStartVal = if ($config['performance']['disable_fast_startup']) { 0 } else { 1 }
+    Check-RegChange -Category "performance" -SettingName "disable_fast_startup" -RegPath "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" -ValName "HiberbootEnabled" -DesiredValue $fastStartVal
+}
+
+if ($config['performance']['unlock_ultimate_performance']) {
+    $isUnlocked = Test-UltimatePerformanceUnlocked
+    if (-not $isUnlocked) {
+        Register-PlannedChange -Category "performance" -SettingName "unlock_ultimate_performance" -CurrentValue "Hidden" -DesiredValue "Unlocked" -AffectsExplorer $false -Action {
+            $null = powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61
+        }
+    } else {
+        Write-Unchanged "performance.unlock_ultimate_performance" "Unlocked"
+    }
+}
+
+if ($null -ne $config['performance']['enable_hardware_gpu_scheduling']) {
+    $hwSchVal = if ($config['performance']['enable_hardware_gpu_scheduling']) { 2 } else { 1 }
+    Check-RegChange -Category "performance" -SettingName "enable_hardware_gpu_scheduling" -RegPath "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -ValName "HwSchMode" -DesiredValue $hwSchVal
+}
+
+# -------------------------------------------------------------
+# 4. UI Cleanliness & De-bloat
+# -------------------------------------------------------------
+Write-Step "Inspecting UI Cleanliness & De-bloat Settings..."
+
+if ($null -ne $config['ui_debloat']['enable_dark_mode']) {
+    $darkVal = if ($config['ui_debloat']['enable_dark_mode']) { 0 } else { 1 }
+    Check-RegChange -Category "ui_debloat" -SettingName "dark_mode_apps" -RegPath "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" -ValName "AppsUseLightTheme" -DesiredValue $darkVal
+    Check-RegChange -Category "ui_debloat" -SettingName "dark_mode_system" -RegPath "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" -ValName "SystemUsesLightTheme" -DesiredValue $darkVal
+}
+
+if ($null -ne $config['ui_debloat']['classic_context_menu']) {
+    if (-not $script:IsWindows11) {
+        Write-Skipped "ui_debloat.classic_context_menu" "Native to Windows 10 (Windows 11 only)"
+    } else {
+        $clsidKey = "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}"
+        $isClassic = (Test-Path "$clsidKey\InprocServer32")
+        if ($config['ui_debloat']['classic_context_menu']) {
+            if (-not $isClassic) {
+                Register-PlannedChange -Category "ui_debloat" -SettingName "classic_context_menu" -CurrentValue "Windows 11 Modern" -DesiredValue "Windows 10 Classic Style" -AffectsExplorer $true -Arguments @($clsidKey) -Action {
+                    param($k)
+                    $null = New-Item -Path "$k\InprocServer32" -Force
+                    $null = Set-Item -Path "$k\InprocServer32" -Value ""
+                }
+            } else {
+                Write-Unchanged "ui_debloat.classic_context_menu" "Enabled (Windows 10 Style)"
+            }
+        } else {
+            if ($isClassic) {
+                Register-PlannedChange -Category "ui_debloat" -SettingName "classic_context_menu" -CurrentValue "Windows 10 Classic Style" -DesiredValue "Windows 11 Modern" -AffectsExplorer $true -Arguments @($clsidKey) -Action {
+                    param($k)
+                    Remove-Item -Path $k -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            } else {
+                Write-Unchanged "ui_debloat.classic_context_menu" "Windows 11 Modern"
+            }
+        }
+    }
+}
+
+if ($null -ne $config['ui_debloat']['left_align_taskbar']) {
+    if (-not $script:IsWindows11) {
+        Write-Skipped "ui_debloat.left_align_taskbar" "Windows 11 taskbar feature"
+    } else {
+        $alignVal = if ($config['ui_debloat']['left_align_taskbar']) { 0 } else { 1 }
+        Check-RegChange -Category "ui_debloat" -SettingName "left_align_taskbar" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "TaskbarAl" -DesiredValue $alignVal
+    }
+}
+
+if ($null -ne $config['ui_debloat']['disable_aero_shake']) {
+    $shakeVal = if ($config['ui_debloat']['disable_aero_shake']) { 1 } else { 0 }
+    Check-RegChange -Category "ui_debloat" -SettingName "disable_aero_shake" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "DisallowShaking" -DesiredValue $shakeVal
+}
+
+if ($null -ne $config['ui_debloat']['hide_taskbar_copilot_button']) {
+    if (-not $script:IsWindows11) {
+        Write-Skipped "ui_debloat.hide_copilot" "Windows 11 taskbar feature"
+    } else {
+        $copilotVal = if ($config['ui_debloat']['hide_taskbar_copilot_button']) { 0 } else { 1 }
+        Check-RegChange -Category "ui_debloat" -SettingName "hide_copilot" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "ShowCopilotButton" -DesiredValue $copilotVal
+    }
+}
+
+if ($null -ne $config['ui_debloat']['hide_taskbar_task_view']) {
+    $taskViewVal = if ($config['ui_debloat']['hide_taskbar_task_view']) { 0 } else { 1 }
+    Check-RegChange -Category "ui_debloat" -SettingName "hide_task_view" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "ShowTaskViewButton" -DesiredValue $taskViewVal
+}
+
+if ($null -ne $config['ui_debloat']['hide_taskbar_widgets']) {
+    if (-not $script:IsWindows11) {
+        Write-Skipped "ui_debloat.hide_widgets" "Windows 11 taskbar feature"
+    } else {
+        $widgetsVal = if ($config['ui_debloat']['hide_taskbar_widgets']) { 0 } else { 1 }
+        Check-RegChange -Category "ui_debloat" -SettingName "hide_widgets" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "TaskbarDa" -DesiredValue $widgetsVal
+    }
+}
+
+if ($null -ne $config['ui_debloat']['disable_widgets_hover']) {
+    if (-not $script:IsWindows11) {
+        Write-Skipped "ui_debloat.disable_widgets_hover" "Windows 11 widgets feature"
+    } else {
+        $widgetsHoverVal = if ($config['ui_debloat']['disable_widgets_hover']) { 0 } else { 1 }
+        Check-RegChange -Category "ui_debloat" -SettingName "disable_widgets_hover" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "TaskbarDa" -DesiredValue $widgetsHoverVal
+    }
+}
+
+if ($null -ne $config['ui_debloat']['disable_start_recommendations']) {
+    if (-not $script:IsWindows11) {
+        Write-Skipped "ui_debloat.disable_start_recommendations" "Windows 11 Start Menu feature"
+    } else {
+        $startRecsVal = if ($config['ui_debloat']['disable_start_recommendations']) { 0 } else { 1 }
+        Check-RegChange -Category "ui_debloat" -SettingName "disable_start_recommendations" -RegPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -ValName "Start_IrisRecommendations" -DesiredValue $startRecsVal
+    }
+}
+
+if ($null -ne $config['ui_debloat']['silence_tips_and_suggestions']) {
+    $tipsVal = if ($config['ui_debloat']['silence_tips_and_suggestions']) { 0 } else { 1 }
+    $cdm = "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
+    Check-RegChange -Category "ui_debloat" -SettingName "silence_suggestions_338388" -RegPath $cdm -ValName "SubscribedContent-338388Enabled" -DesiredValue $tipsVal
+    Check-RegChange -Category "ui_debloat" -SettingName "silence_suggestions_338389" -RegPath $cdm -ValName "SubscribedContent-338389Enabled" -DesiredValue $tipsVal
+    Check-RegChange -Category "ui_debloat" -SettingName "silence_suggestions_353694" -RegPath $cdm -ValName "SubscribedContent-353694Enabled" -DesiredValue $tipsVal
+    Check-RegChange -Category "ui_debloat" -SettingName "silence_suggestions_353696" -RegPath $cdm -ValName "SubscribedContent-353696Enabled" -DesiredValue $tipsVal
+    Check-RegChange -Category "ui_debloat" -SettingName "soft_landing" -RegPath $cdm -ValName "SoftLandingEnabled" -DesiredValue $tipsVal
+    Check-RegChange -Category "ui_debloat" -SettingName "system_pane_suggestions" -RegPath $cdm -ValName "SystemPaneSuggestionsEnabled" -DesiredValue $tipsVal
+}
+
+# Bloatware App Removal
+if ($config['ui_debloat']['remove_bloatware_apps'] -and $config['ui_debloat']['bloatware_list']) {
+    $appsToRemove = $config['ui_debloat']['bloatware_list']
+    $allowedApps = @(
+        "Microsoft.BingNews",
+        "Microsoft.BingWeather",
+        "Microsoft.GetHelp",
+        "Microsoft.Getstarted",
+        "Microsoft.MicrosoftSolitaireCollection",
+        "Microsoft.SkypeApp",
+        "Microsoft.Todos",
+        "Microsoft.ZuneVideo",
+        "Clipchamp.Clipchamp",
+        "ByteDancePte.Ltd.TikTok",
+        "Disney.37853FC2267DE",
+        "SpotifyAB.SpotifyMusic"
+    )
+
+    $allPackages = Get-AppxPackage -ErrorAction SilentlyContinue
+    $installedApps = @{}
+    if ($null -ne $allPackages) {
+        foreach ($pkg in $allPackages) {
+            if ($null -ne $pkg.Name) {
+                $installedApps[$pkg.Name] = $true
+            }
+        }
+    }
+
+    foreach ($appPkg in $appsToRemove) {
+        if ($appPkg -notin $allowedApps) {
+            Write-Skipped "ui_debloat.remove_app" "$appPkg (not in allowlist)"
+            continue
+        }
+        if ($installedApps.ContainsKey($appPkg)) {
+            Register-PlannedChange -Category "ui_debloat" -SettingName "remove_app" -CurrentValue "$appPkg (installed)" -DesiredValue "Uninstall" -AffectsExplorer $false -Arguments @($appPkg) -Action {
+                param($pkg)
+                $target = Get-AppxPackage -Name $pkg -ErrorAction SilentlyContinue
+                if ($target) { $target | Remove-AppxPackage -ErrorAction SilentlyContinue }
+            }
+        } else {
+            Write-Unchanged "ui_debloat.remove_app" "$appPkg (not installed)"
+        }
+    }
+}
+
+if ($null -ne $config['ui_debloat']['disable_sticky_keys_popup']) {
+    $skFlags = Get-RegValSafe -KeyPath "HKCU:\Control Panel\Accessibility\StickyKeys" -ValName "Flags"
+    $isCurrentlyDisabled = if ($skFlags) { (([int]$skFlags) -band 4) -eq 0 } else { $false }
+    if ($config['ui_debloat']['disable_sticky_keys_popup']) {
+        if (-not $isCurrentlyDisabled) {
+            $displayOld = if ($skFlags) { "Enabled (Flags=$skFlags)" } else { "Enabled (Default)" }
+            Register-PlannedChange -Category "ui_debloat" -SettingName "disable_sticky_keys_popup" -CurrentValue $displayOld -DesiredValue "Disabled (No Popups)" -AffectsExplorer $false -Action {
+                Set-RegValSafe -KeyPath "HKCU:\Control Panel\Accessibility\StickyKeys" -ValName "Flags" -Value "506" -Type "String"
+                Set-RegValSafe -KeyPath "HKCU:\Control Panel\Accessibility\ToggleKeys" -ValName "Flags" -Value "58" -Type "String"
+                Set-RegValSafe -KeyPath "HKCU:\Control Panel\Accessibility\Keyboard Response" -ValName "Flags" -Value "122" -Type "String"
+            }
+        } else {
+            Write-Unchanged "ui_debloat.disable_sticky_keys_popup" "Disabled (No Popups)"
+        }
+    } else {
+        if ($isCurrentlyDisabled) {
+            Register-PlannedChange -Category "ui_debloat" -SettingName "disable_sticky_keys_popup" -CurrentValue "Disabled" -DesiredValue "Enabled (Default)" -AffectsExplorer $false -Action {
+                Set-RegValSafe -KeyPath "HKCU:\Control Panel\Accessibility\StickyKeys" -ValName "Flags" -Value "510" -Type "String"
+                Set-RegValSafe -KeyPath "HKCU:\Control Panel\Accessibility\ToggleKeys" -ValName "Flags" -Value "62" -Type "String"
+                Set-RegValSafe -KeyPath "HKCU:\Control Panel\Accessibility\Keyboard Response" -ValName "Flags" -Value "126" -Type "String"
+            }
+        } else {
+            Write-Unchanged "ui_debloat.disable_sticky_keys_popup" "Enabled (Default)"
+        }
+    }
+}
+
+# -------------------------------------------------------------
+# 5. Developer & Terminal Ergonomics
+# -------------------------------------------------------------
+Write-Step "Inspecting Developer & Terminal Ergonomics..."
+
+if ($config['developer']['defender_dev_exclusions']) {
+    if (-not $isAdmin) {
+        Write-Skipped "developer.defender_dev_exclusions" "Requires Administrator elevation"
+    } else {
+        $exclusions = $config['developer']['defender_dev_exclusions']
+        $currentExclusions = @()
+        try {
+            $mpPref = Get-MpPreference -ErrorAction SilentlyContinue
+            if ($mpPref -and $mpPref.ExclusionProcess) {
+                $currentExclusions = $mpPref.ExclusionProcess
+            }
+        } catch { }
+
+        foreach ($proc in $exclusions) {
+            if ($proc -notin $currentExclusions) {
+                Register-PlannedChange -Category "developer" -SettingName "defender_dev_exclusions" -CurrentValue "Not excluded" -DesiredValue "Exclude $proc" -AffectsExplorer $false -Arguments @($proc) -Action {
+                    param($p)
+                    Add-MpPreference -ExclusionProcess $p -ErrorAction SilentlyContinue
+                }
+            } else {
+                Write-Unchanged "developer.defender_dev_exclusions" "$proc (already excluded)"
+            }
+        }
+    }
+}
+
+if ($null -ne $config['developer']['enable_developer_mode']) {
+    $devVal = if ($config['developer']['enable_developer_mode']) { 1 } else { 0 }
+    Check-RegChange -Category "developer" -SettingName "enable_developer_mode" -RegPath "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" -ValName "AllowDevelopmentWithoutDevLicense" -DesiredValue $devVal
+}
+
+if ($null -ne $config['developer']['enable_long_paths']) {
+    $longVal = if ($config['developer']['enable_long_paths']) { 1 } else { 0 }
+    Check-RegChange -Category "developer" -SettingName "enable_long_paths" -RegPath "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -ValName "LongPathsEnabled" -DesiredValue $longVal
+}
+
+if ($config['developer']['configure_git_autocrlf']) {
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        $currCrlf = (git config --global core.autocrlf 2>$null)
+        if ($currCrlf -ne 'true') {
+            $displayOld = if ($currCrlf) { $currCrlf } else { "<none>" }
+            Register-PlannedChange -Category "developer" -SettingName "git_autocrlf" -CurrentValue $displayOld -DesiredValue "true" -AffectsExplorer $false -Action {
+                git config --global core.autocrlf true
+            }
+        } else {
+            Write-Unchanged "developer.git_autocrlf" "true"
+        }
+    }
+}
+
+# Developer Aliases and PSReadLine in PowerShell Profiles
+if ($config['developer']['enable_powershell_shortcuts']) {
+    $devAliasMarkerStart = "# >>> Sane Windows Developer Ergonomics >>>"
+    $devAliasMarkerEnd   = "# <<< Sane Windows Developer Ergonomics <<<"
+    $legacyMarkerStart   = "# >>> Useful Setup Developer Ergonomics >>>"
+    $legacyMarkerEnd     = "# <<< Useful Setup Developer Ergonomics <<<"
+
+    $copyPasteHandlers = ""
+    if ($config['developer']['require_ctrl_shift_copy_paste']) {
+        $copyPasteHandlers = @"
+
+        # Require Ctrl+Shift+C and Ctrl+Shift+V for Copy & Paste
+        Set-PSReadLineKeyHandler -Chord 'Ctrl+Shift+c', 'Ctrl+Shift+C' -Function Copy -ErrorAction SilentlyContinue
+        Set-PSReadLineKeyHandler -Chord 'Ctrl+Shift+v', 'Ctrl+Shift+V' -Function Paste -ErrorAction SilentlyContinue
+        Set-PSReadLineKeyHandler -Chord 'Ctrl+v' -ScriptBlock { } -ErrorAction SilentlyContinue
+        Set-PSReadLineKeyHandler -Chord 'Ctrl+c' -Function CancelLine -ErrorAction SilentlyContinue
+"@
+    }
+
+    $devAliasSnippet = @"
+# >>> Sane Windows Developer Ergonomics >>>
+# Shortcuts & Aliases
+if (-not (Get-Command which -ErrorAction SilentlyContinue)) {
+    Set-Alias -Name which -Value Get-Command -Scope Global
+}
+if (-not (Get-Command ll -ErrorAction SilentlyContinue)) {
+    function global:ll { Get-ChildItem -Path `$args }
+}
+
+# PSReadLine history prediction autocomplete & keybindings
+if (Get-Module -ListAvailable -Name PSReadLine) {
+    try {
+        Set-PSReadLineOption -PredictionSource History -ErrorAction SilentlyContinue$copyPasteHandlers
+    } catch { }
+}
+# <<< Sane Windows Developer Ergonomics <<<
+"@
+
+    $docs = [Environment]::GetFolderPath('MyDocuments')
+    $psProfiles = @(
+        (Join-Path $docs "WindowsPowerShell\Microsoft.PowerShell_profile.ps1"),
+        (Join-Path $docs "PowerShell\Microsoft.PowerShell_profile.ps1")
+    )
+
+    foreach ($p in $psProfiles) {
+        $pContent = if (Test-Path $p) { Get-Content $p -Raw } else { "" }
+        if ($null -eq $pContent) { $pContent = "" }
+
+        $needsUpdate = $false
+        if ($pContent -notmatch [regex]::Escape($devAliasMarkerStart)) {
+            $needsUpdate = $true
+        } elseif ($config['developer']['require_ctrl_shift_copy_paste'] -and ($pContent -notmatch "Set-PSReadLineKeyHandler -Chord 'Ctrl\+Shift\+c'")) {
+            $needsUpdate = $true
+        }
+
+        if ($needsUpdate) {
+            $profName = Split-Path $p -Leaf
+            Register-PlannedChange -Category "developer" -SettingName "powershell_shortcuts" -CurrentValue "<needs update>" -DesiredValue "Inject shortcuts into $profName" -AffectsExplorer $false -Arguments @($p, $devAliasSnippet, $devAliasMarkerStart, $devAliasMarkerEnd, $legacyMarkerStart, $legacyMarkerEnd) -Action {
+                param($prof, $snip, $startMarker, $endMarker, $legStart, $legEnd)
+                $pDir = Split-Path -Parent $prof
+                if (-not (Test-Path $pDir)) { $null = New-Item -ItemType Directory -Path $pDir -Force }
+                $existing = if (Test-Path $prof) { Get-Content $prof -Raw } else { "" }
+                if ($null -eq $existing) { $existing = "" }
+
+                if ($existing -match [regex]::Escape($legStart)) {
+                    $legPattern = "(?s)" + [regex]::Escape($legStart) + ".*?" + [regex]::Escape($legEnd)
+                    $existing = [regex]::Replace($existing, $legPattern, "")
+                }
+
+                if ($existing -match [regex]::Escape($startMarker)) {
+                    $pattern = "(?s)" + [regex]::Escape($startMarker) + ".*?" + [regex]::Escape($endMarker)
+                    $newContent = [regex]::Replace($existing, $pattern, $snip)
+                    Set-Content -Path $prof -Value $newContent -NoNewline
+                } else {
+                    $newP = if ($existing.Trim().Length -gt 0) { $existing.TrimEnd() + "`r`n`r`n" + $snip + "`r`n" } else { $snip + "`r`n" }
+                    Set-Content -Path $prof -Value $newP -NoNewline
+                }
+            }
+        } else {
+            Write-Unchanged "developer.powershell_shortcuts" "$p (already active)"
+        }
+    }
+}
+
+# Terminal Duplicate Tab (Ctrl+Shift+D in same CWD)
+if ($config['developer']['enable_terminal_duplicate_tab']) {
+    $wtSettingsPaths = Get-WindowsTerminalSettingsPaths
+    $isConfigured = $false
+    foreach ($wtPath in $wtSettingsPaths) {
+        if (Test-Path $wtPath) {
+            $raw = Get-Content $wtPath -Raw
+            $clean = Remove-JsonComments $raw
+            if ($clean -match "duplicateTab") {
+                $isConfigured = $true
+                break
+            }
+        }
+    }
+    if (-not $isConfigured) {
+        Register-PlannedChange -Category "developer" -SettingName "terminal_duplicate_tab" -CurrentValue "Default" -DesiredValue "Ctrl+Shift+D in same CWD" -AffectsExplorer $false -Arguments @($ScriptDir) -Action {
+            param($sd)
+            & "$sd\setup_duplicate_tab.ps1" -Quiet
+        }
+    } else {
+        Write-Unchanged "developer.terminal_duplicate_tab" "Ctrl+Shift+D in same CWD"
+    }
+}
+
+if ($config['developer']['exclude_dev_folders_from_search']) {
+    if (-not $isAdmin) {
+        Write-Skipped "developer.exclude_dev_folders_from_search" "Requires Administrator elevation"
+    } else {
+        $alreadyConfigured = Test-SearchIndexerExclusionsConfigured
+        if (-not $alreadyConfigured) {
+            Register-PlannedChange -Category "developer" -SettingName "exclude_dev_folders_from_search" -CurrentValue "<needs update>" -DesiredValue "Exclude dev folders" -AffectsExplorer $false -Action {
+                Add-SearchIndexerExclusion
+            }
+        } else {
+            Write-Unchanged "developer.exclude_dev_folders_from_search" "Dev folders excluded"
+        }
+    }
+} else {
+    Write-Unchanged "developer.exclude_dev_folders_from_search" "Skip exclusion"
+}
+
+# Terminal Copy/Paste (Require Ctrl+Shift+C and Ctrl+Shift+V)
+if ($null -ne $config['developer']['require_ctrl_shift_copy_paste']) {
+    $isWtConfigured = Get-TerminalCopyPasteConfigured
+    if ($config['developer']['require_ctrl_shift_copy_paste']) {
+        if (-not $isWtConfigured) {
+            Register-PlannedChange -Category "developer" -SettingName "terminal_ctrl_shift_copy_paste" -CurrentValue "Default (Ctrl+C/V)" -DesiredValue "Require Ctrl+Shift+C/V" -AffectsExplorer $false -Action {
+                Set-TerminalCopyPasteKeybindings -Enable $true
+            }
+        } else {
+            Write-Unchanged "developer.terminal_ctrl_shift_copy_paste" "Require Ctrl+Shift+C/V"
+        }
+    } else {
+        if ($isWtConfigured) {
+            Register-PlannedChange -Category "developer" -SettingName "terminal_ctrl_shift_copy_paste" -CurrentValue "Require Ctrl+Shift+C/V" -DesiredValue "Default (Ctrl+C/V)" -AffectsExplorer $false -Action {
+                Set-TerminalCopyPasteKeybindings -Enable $false
+            }
+        } else {
+            Write-Unchanged "developer.terminal_ctrl_shift_copy_paste" "Default (Ctrl+C/V)"
+        }
+    }
+}
+
+# -------------------------------------------------------------
+# 6. Windows Update Control
+# -------------------------------------------------------------
+Write-Step "Inspecting Windows Update Control Settings..."
+
+if ($config['windows_update']) {
+    if ($null -ne $config['windows_update']['no_auto_restart_logged_on']) {
+        $rebootVal = if ($config['windows_update']['no_auto_restart_logged_on']) { 1 } else { 0 }
+        Check-RegChange -Category "windows_update" -SettingName "no_auto_restart_logged_on" -RegPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -ValName "NoAutoRebootWithLoggedOnUsers" -DesiredValue $rebootVal
+    }
+
+    if ($null -ne $config['windows_update']['exclude_drivers']) {
+        $driverVal = if ($config['windows_update']['exclude_drivers']) { 1 } else { 0 }
+        Check-RegChange -Category "windows_update" -SettingName "exclude_drivers" -RegPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" -ValName "ExcludeWUDriversInQualityUpdate" -DesiredValue $driverVal
+    }
+}
+
+# -------------------------------------------------------------
+# 7. Network Configuration
+# -------------------------------------------------------------
+Write-Step "Inspecting Network Settings..."
+
+if ($config['network'] -and $null -ne $config['network']['secure_dns_provider']) {
+    $desiredProvider = $config['network']['secure_dns_provider'].ToLower()
+    $currentProvider = "off"
+    if (Get-Command Get-DnsClientServerAddress -ErrorAction SilentlyContinue) {
+        $dnsServers = (Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object { $_.ServerAddresses }).ServerAddresses
+        if ($dnsServers -contains "1.1.1.1" -or $dnsServers -contains "1.0.0.1") {
+            $currentProvider = "cloudflare"
+        } elseif ($dnsServers -contains "9.9.9.9" -or $dnsServers -contains "149.112.112.112") {
+            $currentProvider = "quad9"
+        }
+    }
+
+    if ($currentProvider -ne $desiredProvider) {
+        if (-not $isAdmin) {
+            Write-Skipped "network.secure_dns_provider" "Requires Administrator elevation"
+        } else {
+            Register-PlannedChange -Category "network" -SettingName "secure_dns_provider" -CurrentValue $currentProvider -DesiredValue $desiredProvider -AffectsExplorer $false -Arguments @($desiredProvider) -Action {
+                param($prov)
+                Set-SecureDns -Provider $prov
+            }
+        }
+    } else {
+        Write-Unchanged "network.secure_dns_provider" $desiredProvider
+    }
+}
+
+# -------------------------------------------------------------
+# Confirmation & Execution Phase
+# -------------------------------------------------------------
+if ($script:pendingChanges.Count -eq 0) {
+    Write-Host "`n=================================================================" -ForegroundColor Cyan
+    Write-Host " Setup Complete: All settings already match config.yaml." -ForegroundColor Green
+    Write-Host " 0 changes needed." -ForegroundColor Green
+    Write-Host "=================================================================`n" -ForegroundColor Cyan
+    exit 0
+}
+
+Write-Header "Planned Changes Preview"
+Write-Host " The following $($script:pendingChanges.Count) setting(s) will be modified:`n" -ForegroundColor Yellow
+
+$displayTable = $script:pendingChanges | ForEach-Object {
+    $desc = if ($_.Description) { $_.Description } else { Get-HumanReadableSettingDescription -Category $_.Category -SettingName $_.Setting }
+    $curFmt = Format-HumanReadableValue -Value $_.CurrentValue -Category $_.Category -SettingName $_.Setting
+    $desFmt = Format-HumanReadableValue -Value $_.DesiredValue -Category $_.Category -SettingName $_.Setting
+    [PSCustomObject]@{
+        Category     = $_.Category
+        Setting      = $_.Setting
+        Description  = $desc
+        CurrentValue = $curFmt
+        DesiredValue = $desFmt
+    }
+}
+
+$displayTable | Format-Table -Property @{Label="Category"; Expression={$_.Category}; Width=14}, @{Label="Description"; Expression={$_.Description}; Width=46}, @{Label="Current Value"; Expression={$_.CurrentValue}; Width=16}, @{Label="New Value"; Expression={$_.DesiredValue}; Width=18} -AutoSize
+
+Write-Host "=================================================================`n" -ForegroundColor Cyan
+
+if ($WhatIf) {
+    Write-Host "[i] -WhatIf specified: Dry run preview complete. No changes were applied.`n" -ForegroundColor Cyan
+    exit 0
+}
+
+# Interactive Confirmation
+if (-not $Yes) {
+    $validChoice = $false
+    $interactiveMode = $false
+    while (-not $validChoice) {
+        $choice = Read-Host "Apply these $($script:pendingChanges.Count) change(s)? [Y(es) / N(o) / I(ndividually)]"
+        if ($choice -match '^[Yy]$' -or $choice -eq '') {
+            $validChoice = $true
+        } elseif ($choice -match '^[Ii]$') {
+            $validChoice = $true
+            $interactiveMode = $true
+        } elseif ($choice -match '^[Nn]$') {
+            Write-Host "`n[x] Aborted by user. No changes were made.`n" -ForegroundColor Yellow
+            exit 0
+        }
+    }
+
+    if ($interactiveMode) {
+        $filteredChanges = [System.Collections.ArrayList]@()
+        foreach ($change in $script:pendingChanges) {
+            $desc = if ($change.Description) { $change.Description } else { Get-HumanReadableSettingDescription -Category $change.Category -SettingName $change.Setting }
+            $curFmt = Format-HumanReadableValue -Value $change.CurrentValue -Category $change.Category -SettingName $change.Setting
+            $desFmt = Format-HumanReadableValue -Value $change.DesiredValue -Category $change.Category -SettingName $change.Setting
+            $ans = Read-Host "Apply: $desc ($curFmt -> $desFmt)? [Y/n]"
+            if ($ans -match '^[Yy]$' -or $ans -eq '') {
+                $null = $filteredChanges.Add($change)
+            }
+        }
+        $script:pendingChanges = $filteredChanges
+        if ($script:pendingChanges.Count -eq 0) {
+            Write-Host "`n[x] No changes selected. Aborted.`n" -ForegroundColor Yellow
+            exit 0
+        }
+    }
+}
+
+Write-Host "`n[+] Applying changes..." -ForegroundColor Cyan
+
+# Take safety snapshot before applying
+$initialState = Get-CurrentSystemState
+$snapshotFile = Save-Snapshot -State $initialState
+Write-Success "Saved pre-change snapshot to: $snapshotFile"
+
+if ($CreateRestorePoint) {
+    New-SystemRestorePointSafely
+}
+
+$explorerNeedsRestart = $false
+$appliedCount = 0
+
+foreach ($change in $script:pendingChanges) {
+    try {
+        if ($change.Arguments -and $change.Arguments.Count -gt 0) {
+            $argList = $change.Arguments
+            & $change.Action @argList
+        } else {
+            & $change.Action
+        }
+        $desc = if ($change.Description) { $change.Description } else { Get-HumanReadableSettingDescription -Category $change.Category -SettingName $change.Setting }
+        $curFmt = Format-HumanReadableValue -Value $change.CurrentValue -Category $change.Category -SettingName $change.Setting
+        $desFmt = Format-HumanReadableValue -Value $change.DesiredValue -Category $change.Category -SettingName $change.Setting
+        Write-Host "  [APPLIED] " -ForegroundColor Green -NoNewline
+        Write-Host "$desc" -ForegroundColor White -NoNewline
+        Write-Host " : " -ForegroundColor Gray -NoNewline
+        Write-Host "$curFmt" -ForegroundColor DarkGray -NoNewline
+        Write-Host " -> " -ForegroundColor Gray -NoNewline
+        Write-Host "$desFmt" -ForegroundColor Green
+        $appliedCount++
+        if ($change.AffectsExplorer) {
+            $explorerNeedsRestart = $true
+        }
+    } catch {
+        Write-Warn "Failed to apply $($change.Category).$($change.Setting): $_"
+    }
+}
+
+if ($explorerNeedsRestart) {
+    Restart-ExplorerSafely -Unattended:$Yes -SkipRestart:$NoExplorerRestart
+}
+
+Write-Host "`n=================================================================" -ForegroundColor Cyan
+Write-Host " Setup complete! Successfully applied $appliedCount change(s)." -ForegroundColor Green
+Write-Host "=================================================================" -ForegroundColor Cyan
+Write-Host " Snapshot saved: $snapshotFile" -ForegroundColor DarkGray
+Write-Host " To revert any changes at any time, run: .\setup.ps1 -Revert`n" -ForegroundColor DarkGray

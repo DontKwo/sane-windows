@@ -1,0 +1,21 @@
+# Snapshots contain local system state dumps
+snapshots/*.json
+!snapshots/.gitkeep
+
+# Exported configs
+config.exported.yaml
+
+# Temporary debugging scripts
+test_*.ps1
+patch.*
+*.tmp
+
+# Orchestrator state
+.orchestrator_state.json
+
+# Logs
+*.log
+
+# Sensitive patterns
+.env
+secrets.json
