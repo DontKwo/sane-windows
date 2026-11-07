@@ -1176,6 +1176,224 @@ function Save-Snapshot {
     return $snapshotFile
 }
 
+# Human-readable setting descriptions
+function Get-HumanReadableSettingDescription {
+    param(
+        [string]$Category,
+        [string]$SettingName
+    )
+    $descriptions = @{
+        "privacy.disable_telemetry_policies"        = "Disable Windows telemetry policies"
+        "privacy.disable_telemetry_system"          = "Disable Windows telemetry data collection"
+        "privacy.advertising_id"                    = "Disable advertising ID tracking"
+        "privacy.tailored_experiences"              = "Disable tailored experiences with diagnostic data"
+        "privacy.disable_search_box_suggestions"    = "Disable search box web suggestions"
+        "privacy.bing_search_enabled"               = "Disable Bing search in Start Menu"
+        "privacy.cortana_consent"                   = "Disable Cortana search consent"
+        "privacy.activity_feed"                     = "Disable Windows activity feed tracking"
+        "privacy.publish_user_activities"           = "Disable publishing user activity history"
+        "privacy.upload_user_activities"            = "Disable uploading user activity history"
+        "privacy.siuf_period"                       = "Disable Windows customer feedback prompts"
+        "privacy.feedback_notifications"            = "Disable feedback reminder notifications"
+        "privacy.disable_suggested_actions"         = "Disable suggested actions clipboard tracking"
+        "privacy.disable_diagtrack_service"         = "Disable Connected User Experiences (DiagTrack) service"
+        "privacy.disable_telemetry_tasks"           = "Disable diagnostic and telemetry scheduled tasks"
+
+        "explorer.show_file_extensions"             = "Show file extensions for known file types"
+        "explorer.show_hidden_files"                = "Show hidden files, folders, and drives"
+        "explorer.launch_to_this_pc"                = "Open File Explorer to This PC instead of Home"
+        "explorer.show_full_path_in_title"          = "Display full directory path in Explorer title bar"
+        "explorer.show_seconds_in_clock"            = "Show seconds in taskbar system clock"
+        "explorer.add_open_with_code"               = "Add Open with Code to context menu"
+        "explorer.add_open_in_terminal"             = "Add Open in Windows Terminal to context menu"
+        "explorer.enable_taskbar_end_task"          = "Enable End Task option on taskbar app right-click"
+        "explorer.disable_search_highlights"        = "Disable search highlights and doodles on taskbar"
+        "explorer.disable_store_app_prompt"         = "Disable Search the Store dialog for unknown files"
+        "explorer.lock_screen_overlay"              = "Disable fun facts and tips on lock screen"
+        "explorer.lock_screen_sub"                  = "Disable promotional content subscriptions on lock screen"
+        "explorer.snap_assist"                      = "Disable Snap Assist suggestions when snapping windows"
+        "explorer.snap_assist_flyout"               = "Disable Snap Assist flyout suggestions"
+        "explorer.snap_bar"                         = "Disable Snap Bar popups when dragging windows"
+        "explorer.mouse_sticky_corners"             = "Disable multi-monitor mouse cursor sticky corners"
+
+        "performance.startup_delay"                 = "Disable startup delay for desktop applications"
+        "performance.edge_startup_boost"            = "Disable Microsoft Edge startup boost"
+        "performance.edge_background_mode"          = "Disable Microsoft Edge background pre-launching"
+        "performance.disable_fast_startup"          = "Disable Fast Startup hibernation state carryover"
+        "performance.unlock_ultimate_performance"   = "Unlock Ultimate Performance power plan"
+        "performance.enable_hardware_gpu_scheduling"= "Enable Hardware Accelerated GPU Scheduling"
+
+        "ui_debloat.dark_mode_apps"                 = "Enable dark mode for applications"
+        "ui_debloat.dark_mode_system"               = "Enable dark mode for Windows system"
+        "ui_debloat.classic_context_menu"           = "Restore classic Windows 10 right-click context menu"
+        "ui_debloat.left_align_taskbar"             = "Left-align taskbar buttons and Start menu"
+        "ui_debloat.disable_aero_shake"             = "Disable Aero Shake minimizing background windows"
+        "ui_debloat.hide_copilot"                   = "Hide Copilot button from taskbar"
+        "ui_debloat.hide_task_view"                 = "Hide Task View button from taskbar"
+        "ui_debloat.hide_widgets"                   = "Hide Widgets button from taskbar"
+        "ui_debloat.disable_widgets_hover"          = "Disable Widgets board opening on hover"
+        "ui_debloat.disable_start_recommendations"  = "Disable recommended section in Start Menu"
+        "ui_debloat.silence_suggestions_338388"     = "Disable suggestions in Settings"
+        "ui_debloat.silence_suggestions_338389"     = "Disable suggestions in Windows Welcome Experience"
+        "ui_debloat.silence_suggestions_353694"     = "Disable suggestions in Start Menu"
+        "ui_debloat.silence_suggestions_353696"     = "Disable suggestions in Notification Center"
+        "ui_debloat.soft_landing"                   = "Disable Windows soft-landing tips"
+        "ui_debloat.system_pane_suggestions"        = "Disable tips and suggestions in system panes"
+        "ui_debloat.remove_app"                     = "Uninstall pre-installed bloatware app"
+        "ui_debloat.disable_sticky_keys_popup"      = "Disable Sticky Keys and accessibility shortcut popups"
+
+        "developer.defender_dev_exclusions"         = "Exclude developer tools from Defender scanning"
+        "developer.enable_developer_mode"           = "Enable Windows Developer Mode"
+        "developer.enable_long_paths"               = "Enable Win32 long path support (>260 chars)"
+        "developer.git_autocrlf"                    = "Configure git core.autocrlf to true"
+        "developer.powershell_shortcuts"            = "Configure developer aliases and PSReadLine shortcuts"
+        "developer.terminal_duplicate_tab"          = "Configure duplicate tab in current working directory"
+        "developer.exclude_dev_folders_from_search" = "Exclude dev folders from Windows Search index"
+        "developer.terminal_ctrl_shift_copy_paste"  = "Require Ctrl+Shift+C/V for Terminal copy and paste"
+
+        "windows_update.no_auto_restart_logged_on"  = "Prevent automatic reboot with logged-on users"
+        "windows_update.exclude_drivers"            = "Exclude third-party drivers from Windows Update"
+
+        "network.secure_dns_provider"               = "Configure encrypted DNS (DoH) provider"
+    }
+
+    $lookupKey = "$Category.$SettingName"
+    if ($descriptions.ContainsKey($lookupKey)) {
+        return $descriptions[$lookupKey]
+    }
+    # Fallback to readable string from setting name
+    return ($SettingName -replace '_', ' ')
+}
+
+# Formats raw values into human-readable representations
+function Format-HumanReadableValue {
+    param(
+        $Value,
+        [string]$Category = "",
+        [string]$SettingName = ""
+    )
+    if ($null -eq $Value) { return "<none>" }
+    $strVal = [string]$Value
+
+    # Explicit mappings based on setting semantics
+    switch ("$Category.$SettingName") {
+        "explorer.show_file_extensions" {
+            # HideFileExt: 0 = extensions shown (true), 1 = extensions hidden (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+        "explorer.launch_to_this_pc" {
+            # LaunchTo: 1 = This PC (true), 2 = Home / Quick Access (false)
+            if ($strVal -eq "1") { return "true" }
+            if ($strVal -eq "2") { return "false" }
+        }
+        "explorer.mouse_sticky_corners" {
+            # MouseCornerClipLength: 0 = disabled (true), 6 = default enabled (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "6") { return "false" }
+        }
+        "performance.enable_hardware_gpu_scheduling" {
+            # HwSchMode: 2 = enabled (true), 1 = disabled (false)
+            if ($strVal -eq "2") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+        "privacy.disable_diagtrack_service" {
+            # Start: 4 = Disabled (true), 2 = Automatic (false)
+            if ($strVal -eq "4") { return "true" }
+            if ($strVal -eq "2") { return "false" }
+        }
+        "privacy.disable_telemetry_policies" {
+            # AllowTelemetry: 0 = Security/Disabled (true), 3 = Full (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "3") { return "false" }
+        }
+        "privacy.disable_telemetry_system" {
+            # AllowTelemetry: 0 = Security/Disabled (true), 3 = Full (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "3") { return "false" }
+        }
+        "ui_debloat.left_align_taskbar" {
+            # TaskbarAl: 0 = Left (true), 1 = Center (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+        "ui_debloat.dark_mode_apps" {
+            # AppsUseLightTheme: 0 = Dark (true), 1 = Light (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+        "ui_debloat.dark_mode_system" {
+            # SystemUsesLightTheme: 0 = Dark (true), 1 = Light (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+        "ui_debloat.hide_copilot" {
+            # ShowCopilotButton: 0 = Hidden (true), 1 = Shown (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+        "ui_debloat.hide_task_view" {
+            # ShowTaskViewButton: 0 = Hidden (true), 1 = Shown (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+        "ui_debloat.hide_widgets" {
+            # TaskbarDa: 0 = Hidden (true), 1 = Shown (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+        "ui_debloat.disable_widgets_hover" {
+            # TaskbarDa: 0 = Disabled (true), 1 = Enabled (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+        "ui_debloat.disable_start_recommendations" {
+            # Start_IrisRecommendations: 0 = Disabled (true), 1 = Enabled (false)
+            if ($strVal -eq "0") { return "true" }
+            if ($strVal -eq "1") { return "false" }
+        }
+    }
+
+    # Inverted flags: 0 = true (disabled/feature active), 1 = false
+    if ($SettingName -like "disable_*" -or $SettingName -like "silence_*") {
+        if ($strVal -eq "0") { return "true" }
+        if ($strVal -eq "1") { return "false" }
+    }
+
+    # Standard boolean flags: 1 = true, 0 = false
+    if ($strVal -eq "1" -or $strVal -eq "True") { return "true" }
+    if ($strVal -eq "0" -or $strVal -eq "False") { return "false" }
+
+    return $strVal
+}
+
+# Prompts and safely restarts File Explorer
+function Restart-ExplorerSafely {
+    param(
+        [switch]$Unattended,
+        [switch]$SkipRestart
+    )
+    if ($SkipRestart) { return }
+
+    $shouldRestart = $false
+    if ($Unattended) {
+        $shouldRestart = $true
+    } else {
+        $ans = Read-Host "`nRestart File Explorer now to apply UI and taskbar changes? [Y/n]"
+        if ($ans -match '^[Yy]$' -or $ans -eq '') {
+            $shouldRestart = $true
+        } else {
+            Write-Warn "File Explorer was not restarted. Settings won't apply until you restart File Explorer or sign out."
+        }
+    }
+
+    if ($shouldRestart) {
+        Write-Step "Restarting File Explorer to apply UI & Explorer changes..."
+        Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
+    }
+}
+
 # --- Config Export Execution ---
 if ($ExportConfig) {
     $targetExport = if ($ExportPath) { $ExportPath } else { Join-Path $ScriptDir "config.exported.yaml" }
@@ -1328,9 +1546,8 @@ if ($Revert) {
     $null = & "$ScriptDir\setup_duplicate_tab.ps1" -Uninstall
     Write-Info "PowerShell profile duplicate tab hooks reverted."
 
-    if ($explorerNeedsRestart -and -not $NoExplorerRestart) {
-        Write-Step "Restarting File Explorer to apply reverted settings..."
-        Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+    if ($explorerNeedsRestart) {
+        Restart-ExplorerSafely -Unattended:$Yes -SkipRestart:$NoExplorerRestart
     }
 
     Write-Host "`nReversion complete! $revertedCount settings restored to snapshot state." -ForegroundColor Green
@@ -2104,15 +2321,19 @@ Write-Header "Planned Changes Preview"
 Write-Host " The following $($script:pendingChanges.Count) setting(s) will be modified:`n" -ForegroundColor Yellow
 
 $displayTable = $script:pendingChanges | ForEach-Object {
+    $desc = if ($_.Description) { $_.Description } else { Get-HumanReadableSettingDescription -Category $_.Category -SettingName $_.Setting }
+    $curFmt = Format-HumanReadableValue -Value $_.CurrentValue -Category $_.Category -SettingName $_.Setting
+    $desFmt = Format-HumanReadableValue -Value $_.DesiredValue -Category $_.Category -SettingName $_.Setting
     [PSCustomObject]@{
         Category     = $_.Category
         Setting      = $_.Setting
-        CurrentValue = $_.CurrentValue
-        DesiredValue = $_.DesiredValue
+        Description  = $desc
+        CurrentValue = $curFmt
+        DesiredValue = $desFmt
     }
 }
 
-$displayTable | Format-Table -Property @{Label="Category"; Expression={$_.Category}; Width=12}, @{Label="Setting"; Expression={$_.Setting}; Width=32}, @{Label="Current Value"; Expression={$_.CurrentValue}; Width=20}, @{Label="New Value"; Expression={$_.DesiredValue}; Width=25} -AutoSize
+$displayTable | Format-Table -Property @{Label="Category"; Expression={$_.Category}; Width=14}, @{Label="Description"; Expression={$_.Description}; Width=46}, @{Label="Current Value"; Expression={$_.CurrentValue}; Width=16}, @{Label="New Value"; Expression={$_.DesiredValue}; Width=18} -AutoSize
 
 Write-Host "=================================================================`n" -ForegroundColor Cyan
 
@@ -2141,7 +2362,10 @@ if (-not $Yes) {
     if ($interactiveMode) {
         $filteredChanges = [System.Collections.ArrayList]@()
         foreach ($change in $script:pendingChanges) {
-            $ans = Read-Host "Apply $($change.Category).$($change.Setting) ($($change.CurrentValue) -> $($change.DesiredValue))? [Y/n]"
+            $desc = if ($change.Description) { $change.Description } else { Get-HumanReadableSettingDescription -Category $change.Category -SettingName $change.Setting }
+            $curFmt = Format-HumanReadableValue -Value $change.CurrentValue -Category $change.Category -SettingName $change.Setting
+            $desFmt = Format-HumanReadableValue -Value $change.DesiredValue -Category $change.Category -SettingName $change.Setting
+            $ans = Read-Host "Apply: $desc ($curFmt -> $desFmt)? [Y/n]"
             if ($ans -match '^[Yy]$' -or $ans -eq '') {
                 $null = $filteredChanges.Add($change)
             }
@@ -2176,13 +2400,15 @@ foreach ($change in $script:pendingChanges) {
         } else {
             & $change.Action
         }
+        $desc = if ($change.Description) { $change.Description } else { Get-HumanReadableSettingDescription -Category $change.Category -SettingName $change.Setting }
+        $curFmt = Format-HumanReadableValue -Value $change.CurrentValue -Category $change.Category -SettingName $change.Setting
+        $desFmt = Format-HumanReadableValue -Value $change.DesiredValue -Category $change.Category -SettingName $change.Setting
         Write-Host "  [APPLIED] " -ForegroundColor Green -NoNewline
-        Write-Host "$($change.Category)." -ForegroundColor Cyan -NoNewline
-        Write-Host "$($change.Setting)" -ForegroundColor White -NoNewline
+        Write-Host "$desc" -ForegroundColor White -NoNewline
         Write-Host " : " -ForegroundColor Gray -NoNewline
-        Write-Host "$($change.CurrentValue)" -ForegroundColor DarkGray -NoNewline
+        Write-Host "$curFmt" -ForegroundColor DarkGray -NoNewline
         Write-Host " -> " -ForegroundColor Gray -NoNewline
-        Write-Host "$($change.DesiredValue)" -ForegroundColor Green
+        Write-Host "$desFmt" -ForegroundColor Green
         $appliedCount++
         if ($change.AffectsExplorer) {
             $explorerNeedsRestart = $true
@@ -2192,10 +2418,8 @@ foreach ($change in $script:pendingChanges) {
     }
 }
 
-if ($explorerNeedsRestart -and -not $NoExplorerRestart) {
-    Write-Host "`n  [*] Restarting File Explorer to apply UI & Explorer changes..." -ForegroundColor Yellow
-    Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 1
+if ($explorerNeedsRestart) {
+    Restart-ExplorerSafely -Unattended:$Yes -SkipRestart:$NoExplorerRestart
 }
 
 Write-Host "`n=================================================================" -ForegroundColor Cyan
