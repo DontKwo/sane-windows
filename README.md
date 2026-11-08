@@ -6,6 +6,8 @@ Modular system configuration and disk maintenance for Windows 10 and 11.
 
 ## Overview
 
+SYSTEM MODIFICATION DISCLAIMER: sane-windows scripts execute low-level Windows configuration changes, registry edits, service adjustments, and environment modifications. Run at your own risk. The software is provided AS IS, without warranty of any kind. The author is not liable for system instability, data loss, operating system recovery requirements, or policy violations.
+
 Sane Windows provides two snapshot-safe management tools:
 * **`setup.ps1`**: Configures privacy, Explorer, performance, UI, developer ergonomics, and Windows Update settings defined in `config.yaml`. Takes an automatic snapshot before making modifications to allow immediate rollback.
 * **`clean-storage.ps1`**: Reclaims disk space by clearing temporary files, package caches (`uv`, `pip`, `npm`, `pnpm`, `yarn`), compiler toolchains, application caches, crash dumps, and container runtimes with explicit confirmation prompts.

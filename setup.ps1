@@ -1,4 +1,7 @@
 <#
+.AUTHOR
+    DontKwo
+
 .SYNOPSIS
     Sane Windows: Windows QOL, Privacy, Performance, and Developer Ergonomics.
 
