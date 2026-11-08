@@ -1,4 +1,7 @@
 <#
+.AUTHOR
+    DontKwo
+
 .SYNOPSIS
     Configures Windows Terminal and PowerShell so that Ctrl + Shift + D opens a new tab
     in the exact same directory as the current tab.

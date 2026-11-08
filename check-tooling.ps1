@@ -1,4 +1,7 @@
 <#
+.AUTHOR
+    DontKwo
+
 .SYNOPSIS
 Diagnoses, installs, and updates developer CLIs and versions.
 #>

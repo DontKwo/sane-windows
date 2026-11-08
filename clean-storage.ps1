@@ -1,4 +1,7 @@
 <#
+.AUTHOR
+    DontKwo
+
 .SYNOPSIS
     Cleans system temp folders, application caches, outdated app versions, and developer toolchains.
 
