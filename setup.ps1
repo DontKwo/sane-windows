@@ -307,6 +307,7 @@ function Test-ConfigFile {
             "configure_git_autocrlf",
             "enable_powershell_shortcuts",
             "enable_terminal_duplicate_tab",
+            "show_cwd_in_tab_title",
             "require_ctrl_shift_copy_paste",
             "exclude_dev_folders_from_search"
         )
@@ -568,8 +569,8 @@ function Get-WindowsTerminalSettingsPaths {
 function Get-TerminalCopyPasteConfigured {
     $wtSettingsPaths = Get-WindowsTerminalSettingsPaths
     foreach ($wtPath in $wtSettingsPaths) {
-        if (-not (Test-Path -LiteralPath $wtPath)) { continue }
         try {
+            if (-not (Test-Path -LiteralPath $wtPath -ErrorAction SilentlyContinue)) { continue }
             $raw = Get-Content -LiteralPath $wtPath -Raw
             $clean = Remove-JsonComments $raw
             $wt = $clean | ConvertFrom-Json
@@ -632,6 +633,219 @@ function Set-TerminalCopyPasteKeybindings {
             [System.IO.File]::WriteAllText($wtPath, $json, [System.Text.Encoding]::UTF8)
         } catch {
             Write-Warn "Failed to update Windows Terminal settings at $wtPath : $_"
+        }
+    }
+}
+
+function Get-PowerShellProfilePaths {
+    [OutputType([string[]])]
+    param()
+    $docs = [Environment]::GetFolderPath('MyDocuments')
+    if ([string]::IsNullOrEmpty($docs)) { $docs = $HOME }
+    $paths = @(
+        (Join-Path $docs "WindowsPowerShell\Microsoft.PowerShell_profile.ps1"),
+        (Join-Path $docs "PowerShell\Microsoft.PowerShell_profile.ps1")
+    )
+    if ($PROFILE) {
+        $profStr = $PROFILE.ToString()
+        if (-not [string]::IsNullOrWhiteSpace($profStr) -and ($paths -notcontains $profStr)) {
+            $paths += $profStr
+        }
+    }
+    return $paths
+}
+
+function Format-TabTitlePath {
+    [OutputType([string])]
+    param(
+        [string]$ProviderPath,
+        [string]$HomePath = $HOME
+    )
+    if ([string]::IsNullOrEmpty($ProviderPath)) { return "" }
+    $normPath = $ProviderPath -replace '\\', '/'
+    if (-not [string]::IsNullOrEmpty($HomePath)) {
+        $normHome = ($HomePath -replace '\\', '/').TrimEnd('/')
+        if ($normHome.Length -gt 0 -and $normPath.StartsWith($normHome, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $relPath = $normPath.Substring($normHome.Length)
+            if ($relPath.Length -eq 0 -or $relPath -eq '/') {
+                return "~"
+            }
+            if ($relPath.StartsWith('/')) {
+                return "~" + $relPath
+            }
+        }
+    }
+    return $normPath
+}
+
+function Get-TerminalTabTitleConfigured {
+    [OutputType([bool])]
+    param(
+        [string[]]$ProfilePaths = (Get-PowerShellProfilePaths),
+        [string[]]$WtSettingsPaths = (Get-WindowsTerminalSettingsPaths)
+    )
+    $markerStart = "# >>> Sane Windows Tab Title CWD >>>"
+    if (-not $ProfilePaths -or $ProfilePaths.Count -eq 0) { return $false }
+
+    foreach ($p in $ProfilePaths) {
+        $raw = $null
+        try {
+            if (-not (Test-Path -LiteralPath $p -ErrorAction SilentlyContinue)) { return $false }
+            $raw = Get-Content -LiteralPath $p -Raw -ErrorAction SilentlyContinue
+        } catch {
+            return $false
+        }
+        if ([string]::IsNullOrEmpty($raw) -or ($raw -notmatch [regex]::Escape($markerStart))) {
+            return $false
+        }
+    }
+
+    foreach ($wtPath in $WtSettingsPaths) {
+        try {
+            if (-not (Test-Path -LiteralPath $wtPath -ErrorAction SilentlyContinue)) { continue }
+            $rawWt = Get-Content -LiteralPath $wtPath -Raw
+            $cleanWt = Remove-JsonComments $rawWt
+            $wt = $cleanWt | ConvertFrom-Json
+            if ($wt.profiles -and $wt.profiles.defaults -and $wt.profiles.defaults.suppressApplicationTitle -eq $true) {
+                return $false
+            }
+        } catch { }
+    }
+    return $true
+}
+
+function Set-TerminalTabTitleCwd {
+    [OutputType([void])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [bool]$Enable,
+        [string[]]$ProfilePaths = (Get-PowerShellProfilePaths),
+        [string[]]$WtSettingsPaths = (Get-WindowsTerminalSettingsPaths)
+    )
+    $markerStart = "# >>> Sane Windows Tab Title CWD >>>"
+    $markerEnd   = "# <<< Sane Windows Tab Title CWD <<<"
+
+    $snippet = @'
+# >>> Sane Windows Tab Title CWD >>>
+if (-not $global:__SANE_WINDOWS_TAB_TITLE_LOADED) {
+    $global:__SANE_WINDOWS_TAB_TITLE_LOADED = $true
+
+    if ((Test-Path Function:\prompt) -and (-not (Test-Path Function:\__sane_windows_tab_title_original_prompt))) {
+        Copy-Item Function:\prompt Function:\__sane_windows_tab_title_original_prompt
+    }
+
+    function global:prompt {
+        $promptResult = if (Test-Path Function:\__sane_windows_tab_title_original_prompt) {
+            __sane_windows_tab_title_original_prompt
+        } else {
+            "PS $($ExecutionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) "
+        }
+
+        try {
+            $loc = $ExecutionContext.SessionState.Path.CurrentLocation
+            if ($loc.Provider.Name -eq 'FileSystem') {
+                $normPath = $loc.ProviderPath -replace '\\', '/'
+                $normHome = ($HOME -replace '\\', '/').TrimEnd('/')
+                if ($normHome.Length -gt 0 -and $normPath.StartsWith($normHome, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $relPath = $normPath.Substring($normHome.Length)
+                    if ($relPath.Length -eq 0 -or $relPath -eq '/') {
+                        $normPath = '~'
+                    } elseif ($relPath.StartsWith('/')) {
+                        $normPath = '~' + $relPath
+                    }
+                }
+                $Host.UI.RawUI.WindowTitle = $normPath
+            } else {
+                $Host.UI.RawUI.WindowTitle = "$loc"
+            }
+        } catch { }
+
+        return $promptResult
+    }
+}
+# <<< Sane Windows Tab Title CWD <<<
+'@
+
+    if ($Enable -and (-not $PSBoundParameters.ContainsKey('ProfilePaths'))) {
+        try {
+            $effectivePolicy = Get-ExecutionPolicy
+            if ($effectivePolicy -notin @('RemoteSigned', 'Unrestricted', 'Bypass')) {
+                Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            }
+        } catch { }
+    }
+
+    foreach ($prof in $ProfilePaths) {
+        $pDir = Split-Path -Parent $prof
+        if (-not (Test-Path -LiteralPath $pDir)) {
+            if ($Enable) {
+                $null = New-Item -ItemType Directory -Path $pDir -Force
+            } else {
+                continue
+            }
+        }
+
+        $existing = if (Test-Path -LiteralPath $prof) { Get-Content -LiteralPath $prof -Raw } else { "" }
+        if ($null -eq $existing) { $existing = "" }
+
+        if ($Enable) {
+            if ($existing -match [regex]::Escape($markerStart)) {
+                $pattern = "(?s)" + [regex]::Escape($markerStart) + ".*?" + [regex]::Escape($markerEnd)
+                $newContent = [regex]::Replace($existing, $pattern, $snippet)
+                [System.IO.File]::WriteAllText($prof, $newContent, [System.Text.Encoding]::UTF8)
+            } else {
+                $newContent = if ($existing.Trim().Length -gt 0) {
+                    $existing.TrimEnd() + "`r`n`r`n" + $snippet + "`r`n"
+                } else {
+                    $snippet + "`r`n"
+                }
+                [System.IO.File]::WriteAllText($prof, $newContent, [System.Text.Encoding]::UTF8)
+            }
+        } else {
+            if ($existing -match [regex]::Escape($markerStart)) {
+                $pattern = "(?s)\r?\n?" + [regex]::Escape($markerStart) + ".*?" + [regex]::Escape($markerEnd) + "\r?\n?"
+                $newContent = [regex]::Replace($existing, $pattern, "")
+                [System.IO.File]::WriteAllText($prof, $newContent, [System.Text.Encoding]::UTF8)
+            }
+        }
+    }
+
+    if ($Enable) {
+        foreach ($wtPath in $WtSettingsPaths) {
+            try {
+                if (-not (Test-Path -LiteralPath $wtPath -ErrorAction SilentlyContinue)) { continue }
+                $rawWt = Get-Content -LiteralPath $wtPath -Raw
+                $cleanWt = Remove-JsonComments $rawWt
+                $wt = $cleanWt | ConvertFrom-Json
+                $modifiedWt = $false
+                if ($wt.profiles -and $wt.profiles.defaults -and $wt.profiles.defaults.suppressApplicationTitle -eq $true) {
+                    $wt.profiles.defaults.suppressApplicationTitle = $false
+                    $modifiedWt = $true
+                }
+                if ($wt.profiles -and $wt.profiles.list) {
+                    foreach ($profObj in $wt.profiles.list) {
+                        if ($profObj.suppressApplicationTitle -eq $true) {
+                            $profObj.suppressApplicationTitle = $false
+                            $modifiedWt = $true
+                        }
+                    }
+                }
+                if ($modifiedWt) {
+                    $jsonOut = $wt | ConvertTo-Json -Depth 20
+                    [System.IO.File]::WriteAllText($wtPath, $jsonOut, [System.Text.Encoding]::UTF8)
+                }
+            } catch {
+                Write-Warn "Failed to update Windows Terminal settings at $wtPath : $_"
+            }
+        }
+        if (-not $PSBoundParameters.ContainsKey('ProfilePaths')) {
+            try {
+                Invoke-Expression $snippet
+                $loc = $ExecutionContext.SessionState.Path.CurrentLocation
+                if ($loc.Provider.Name -eq 'FileSystem') {
+                    $Host.UI.RawUI.WindowTitle = Format-TabTitlePath -ProviderPath $loc.ProviderPath -HomePath $HOME
+                }
+            } catch { }
         }
     }
 }
@@ -719,6 +933,7 @@ function Export-CurrentConfiguration {
     $gitCrlf = ($crlfVal -ieq 'true')
 
     $docs = [Environment]::GetFolderPath('MyDocuments')
+    if ([string]::IsNullOrEmpty($docs)) { $docs = $HOME }
     $p1 = Join-Path $docs "WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
     $p2 = Join-Path $docs "PowerShell\Microsoft.PowerShell_profile.ps1"
     $psShortcuts = $false
@@ -737,6 +952,7 @@ function Export-CurrentConfiguration {
             }
         }
     }
+    $isTabTitleCwd = (Get-TerminalTabTitleConfigured)
     $isCtrlShiftCopyPaste = (Get-TerminalCopyPasteConfigured)
     $isDevIndexExcluded = $true # Hard to read from COM, default to true
 
@@ -746,14 +962,16 @@ function Export-CurrentConfiguration {
 
     # Network
     $secureDnsProvider = "off"
-    if (Get-Command Get-DnsClientServerAddress -ErrorAction SilentlyContinue) {
-        $dnsServers = (Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object { $_.ServerAddresses }).ServerAddresses
-        if ($dnsServers -contains "1.1.1.1" -or $dnsServers -contains "1.0.0.1") {
-            $secureDnsProvider = "cloudflare"
-        } elseif ($dnsServers -contains "9.9.9.9" -or $dnsServers -contains "149.112.112.112") {
-            $secureDnsProvider = "quad9"
+    try {
+        if (Get-Command Get-DnsClientServerAddress -ErrorAction SilentlyContinue) {
+            $dnsServers = (Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.ServerAddresses }).ServerAddresses
+            if ($dnsServers -contains "1.1.1.1" -or $dnsServers -contains "1.0.0.1") {
+                $secureDnsProvider = "cloudflare"
+            } elseif ($dnsServers -contains "9.9.9.9" -or $dnsServers -contains "149.112.112.112") {
+                $secureDnsProvider = "quad9"
+            }
         }
-    }
+    } catch { }
 
     function To-YBool($b) { if ($b) { "true" } else { "false" } }
 
@@ -939,6 +1157,9 @@ developer:
 
   # Binds Ctrl+Shift+D in Terminal and installs OSC 9;9 CWD tracker
   enable_terminal_duplicate_tab: $(To-YBool $termDup)
+
+  # Displays current working directory (e.g. ~/projects/sane-windows) in Terminal & PowerShell tab titles
+  show_cwd_in_tab_title: $(To-YBool $isTabTitleCwd)
 
   # Requires Ctrl+Shift+C to copy and Ctrl+Shift+V to paste in Terminal & PowerShell
   require_ctrl_shift_copy_paste: $(To-YBool $isCtrlShiftCopyPaste)
@@ -1135,6 +1356,7 @@ function Get-CurrentSystemState {
             } catch { }
         }
     }
+    $state.terminal["showCwdInTabTitle"] = (Get-TerminalTabTitleConfigured)
     $state.terminal["ctrlShiftCopyPaste"] = (Get-TerminalCopyPasteConfigured)
 
     # Power State
@@ -1251,6 +1473,7 @@ function Get-HumanReadableSettingDescription {
         "developer.git_autocrlf"                    = "Configure git core.autocrlf to true"
         "developer.powershell_shortcuts"            = "Configure developer aliases and PSReadLine shortcuts"
         "developer.terminal_duplicate_tab"          = "Configure duplicate tab in current working directory"
+        "developer.show_cwd_in_tab_title"           = "Show current folder path in Terminal tab title"
         "developer.exclude_dev_folders_from_search" = "Exclude dev folders from Windows Search index"
         "developer.terminal_ctrl_shift_copy_paste"  = "Require Ctrl+Shift+C/V for Terminal copy and paste"
 
@@ -1543,6 +1766,17 @@ if ($Revert) {
         Set-TerminalCopyPasteKeybindings -Enable $false
         Write-Changed "Windows Terminal" "ctrlShiftCopyPaste" "Modified" "Restored to defaults"
         $revertedCount++
+    }
+
+    # Revert Terminal Tab Title CWD
+    if ($snapData.terminal) {
+        $snapTabTitle = ($snapData.terminal.showCwdInTabTitle -eq $true)
+        if ($snapTabTitle -ne (Get-TerminalTabTitleConfigured)) {
+            Set-TerminalTabTitleCwd -Enable $snapTabTitle
+            $stateLabel = if ($snapTabTitle) { "Restored from snapshot" } else { "Restored to defaults" }
+            Write-Changed "Windows Terminal" "showCwdInTabTitle" "Modified" $stateLabel
+            $revertedCount++
+        }
     }
 
     # Revert PowerShell profiles
@@ -2005,7 +2239,10 @@ if ($config['ui_debloat']['remove_bloatware_apps'] -and $config['ui_debloat']['b
         "SpotifyAB.SpotifyMusic"
     )
 
-    $allPackages = Get-AppxPackage -ErrorAction SilentlyContinue
+    $allPackages = $null
+    try {
+        $allPackages = Get-AppxPackage -ErrorAction SilentlyContinue
+    } catch { }
     $installedApps = @{}
     if ($null -ne $allPackages) {
         foreach ($pkg in $allPackages) {
@@ -2153,13 +2390,17 @@ if (Get-Module -ListAvailable -Name PSReadLine) {
 "@
 
     $docs = [Environment]::GetFolderPath('MyDocuments')
+    if ([string]::IsNullOrEmpty($docs)) { $docs = $HOME }
     $psProfiles = @(
         (Join-Path $docs "WindowsPowerShell\Microsoft.PowerShell_profile.ps1"),
         (Join-Path $docs "PowerShell\Microsoft.PowerShell_profile.ps1")
     )
 
     foreach ($p in $psProfiles) {
-        $pContent = if (Test-Path $p) { Get-Content $p -Raw } else { "" }
+        $pContent = ""
+        try {
+            if (Test-Path -LiteralPath $p) { $pContent = Get-Content -LiteralPath $p -Raw -ErrorAction SilentlyContinue }
+        } catch { }
         if ($null -eq $pContent) { $pContent = "" }
 
         $needsUpdate = $false
@@ -2203,14 +2444,16 @@ if ($config['developer']['enable_terminal_duplicate_tab']) {
     $wtSettingsPaths = Get-WindowsTerminalSettingsPaths
     $isConfigured = $false
     foreach ($wtPath in $wtSettingsPaths) {
-        if (Test-Path $wtPath) {
-            $raw = Get-Content $wtPath -Raw
-            $clean = Remove-JsonComments $raw
-            if ($clean -match "duplicateTab") {
-                $isConfigured = $true
-                break
+        try {
+            if (Test-Path -LiteralPath $wtPath) {
+                $raw = Get-Content -LiteralPath $wtPath -Raw -ErrorAction SilentlyContinue
+                $clean = Remove-JsonComments $raw
+                if ($clean -match "duplicateTab") {
+                    $isConfigured = $true
+                    break
+                }
             }
-        }
+        } catch { }
     }
     if (-not $isConfigured) {
         Register-PlannedChange -Category "developer" -SettingName "terminal_duplicate_tab" -CurrentValue "Default" -DesiredValue "Ctrl+Shift+D in same CWD" -AffectsExplorer $false -Arguments @($ScriptDir) -Action {
@@ -2219,6 +2462,28 @@ if ($config['developer']['enable_terminal_duplicate_tab']) {
         }
     } else {
         Write-Unchanged "developer.terminal_duplicate_tab" "Ctrl+Shift+D in same CWD"
+    }
+}
+
+# Terminal & PowerShell Tab Title CWD (e.g. ~/projects/sane-windows)
+if ($null -ne $config['developer']['show_cwd_in_tab_title']) {
+    $isTabTitleConfigured = Get-TerminalTabTitleConfigured
+    if ($config['developer']['show_cwd_in_tab_title']) {
+        if (-not $isTabTitleConfigured) {
+            Register-PlannedChange -Category "developer" -SettingName "show_cwd_in_tab_title" -CurrentValue "false" -DesiredValue "true" -AffectsExplorer $false -Action {
+                Set-TerminalTabTitleCwd -Enable $true
+            }
+        } else {
+            Write-Unchanged "developer.show_cwd_in_tab_title" "true"
+        }
+    } else {
+        if ($isTabTitleConfigured) {
+            Register-PlannedChange -Category "developer" -SettingName "show_cwd_in_tab_title" -CurrentValue "true" -DesiredValue "false" -AffectsExplorer $false -Action {
+                Set-TerminalTabTitleCwd -Enable $false
+            }
+        } else {
+            Write-Unchanged "developer.show_cwd_in_tab_title" "false"
+        }
     }
 }
 
@@ -2286,14 +2551,16 @@ Write-Step "Inspecting Network Settings..."
 if ($config['network'] -and $null -ne $config['network']['secure_dns_provider']) {
     $desiredProvider = $config['network']['secure_dns_provider'].ToLower()
     $currentProvider = "off"
-    if (Get-Command Get-DnsClientServerAddress -ErrorAction SilentlyContinue) {
-        $dnsServers = (Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object { $_.ServerAddresses }).ServerAddresses
-        if ($dnsServers -contains "1.1.1.1" -or $dnsServers -contains "1.0.0.1") {
-            $currentProvider = "cloudflare"
-        } elseif ($dnsServers -contains "9.9.9.9" -or $dnsServers -contains "149.112.112.112") {
-            $currentProvider = "quad9"
+    try {
+        if (Get-Command Get-DnsClientServerAddress -ErrorAction SilentlyContinue) {
+            $dnsServers = (Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.ServerAddresses }).ServerAddresses
+            if ($dnsServers -contains "1.1.1.1" -or $dnsServers -contains "1.0.0.1") {
+                $currentProvider = "cloudflare"
+            } elseif ($dnsServers -contains "9.9.9.9" -or $dnsServers -contains "149.112.112.112") {
+                $currentProvider = "quad9"
+            }
         }
-    }
+    } catch { }
 
     if ($currentProvider -ne $desiredProvider) {
         if (-not $isAdmin) {

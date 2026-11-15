@@ -59,6 +59,9 @@ Describe "Get-HumanReadableSettingDescription" {
 
         $descUI = Get-HumanReadableSettingDescription -Category "ui_debloat" -SettingName "classic_context_menu"
         $descUI | Should -Be "Restore classic Windows 10 right-click context menu"
+
+        $descTab = Get-HumanReadableSettingDescription -Category "developer" -SettingName "show_cwd_in_tab_title"
+        $descTab | Should -Be "Show current folder path in Terminal tab title"
     }
 
     It "Falls back gracefully for unknown settings" {
@@ -106,5 +109,60 @@ Describe "Format-HumanReadableValue" {
     It "Preserves descriptive strings or complex values" {
         Format-HumanReadableValue -Value "Windows 10 Classic Style" | Should -Be "Windows 10 Classic Style"
         Format-HumanReadableValue -Value "Uninstall" | Should -Be "Uninstall"
+    }
+}
+
+Describe "Format-TabTitlePath and Terminal Tab Title CWD" {
+    BeforeAll {
+        $code = Get-Content -Path "$PSScriptRoot/setup.ps1" -Raw
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($code, [ref]$null, [ref]$null)
+        foreach ($fnName in @('Remove-JsonComments', 'Write-Warn', 'Get-PowerShellProfilePaths', 'Get-WindowsTerminalSettingsPaths', 'Format-TabTitlePath', 'Get-TerminalTabTitleConfigured', 'Set-TerminalTabTitleCwd')) {
+            $func = $ast.Find({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq $fnName }, $true)
+            if ($func) {
+                Invoke-Expression $func.Extent.Text
+            } else {
+                throw "Could not extract $fnName from setup.ps1"
+            }
+        }
+    }
+
+    It "Formats paths under HOME with ~ and forward slashes" {
+        Format-TabTitlePath -ProviderPath "C:\Users\Josh\projects\sane-windows" -HomePath "C:\Users\Josh" | Should -Be "~/projects/sane-windows"
+        Format-TabTitlePath -ProviderPath "C:\Users\Josh" -HomePath "C:\Users\Josh" | Should -Be "~"
+        Format-TabTitlePath -ProviderPath "C:\Users\Josh\" -HomePath "C:\Users\Josh" | Should -Be "~"
+    }
+
+    It "Does not false-match sibling user directories or non-HOME drives" {
+        Format-TabTitlePath -ProviderPath "C:\Users\Joshua\projects" -HomePath "C:\Users\Josh" | Should -Be "C:/Users/Joshua/projects"
+        Format-TabTitlePath -ProviderPath "D:\work\repo" -HomePath "C:\Users\Josh" | Should -Be "D:/work/repo"
+        Format-TabTitlePath -ProviderPath "" -HomePath "C:\Users\Josh" | Should -Be ""
+    }
+
+    It "Installs, detects, updates, and removes CWD tab title hook across profiles and Terminal settings" {
+        $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("sane_win_test_" + [guid]::NewGuid().ToString("N"))
+        $null = New-Item -ItemType Directory -Path $tempDir -Force
+        try {
+            $prof1 = Join-Path $tempDir "WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
+            $prof2 = Join-Path $tempDir "PowerShell\Microsoft.PowerShell_profile.ps1"
+            $wtJson = Join-Path $tempDir "settings.json"
+
+            [System.IO.File]::WriteAllText($wtJson, '{"profiles":{"defaults":{"suppressApplicationTitle":true},"list":[{"name":"Windows PowerShell","suppressApplicationTitle":true}]}}', [System.Text.Encoding]::UTF8)
+
+            Get-TerminalTabTitleConfigured -ProfilePaths @($prof1, $prof2) -WtSettingsPaths @($wtJson) | Should -Be $false
+
+            Set-TerminalTabTitleCwd -Enable $true -ProfilePaths @($prof1, $prof2) -WtSettingsPaths @($wtJson)
+
+            Get-TerminalTabTitleConfigured -ProfilePaths @($prof1, $prof2) -WtSettingsPaths @($wtJson) | Should -Be $true
+            $parsedWt = Get-Content -LiteralPath $wtJson -Raw | ConvertFrom-Json
+            $parsedWt.profiles.defaults.suppressApplicationTitle | Should -Be $false
+            $parsedWt.profiles.list[0].suppressApplicationTitle | Should -Be $false
+
+            Set-TerminalTabTitleCwd -Enable $false -ProfilePaths @($prof1, $prof2) -WtSettingsPaths @($wtJson)
+            Get-TerminalTabTitleConfigured -ProfilePaths @($prof1, $prof2) -WtSettingsPaths @($wtJson) | Should -Be $false
+        } finally {
+            if (Test-Path -LiteralPath $tempDir) {
+                Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 }

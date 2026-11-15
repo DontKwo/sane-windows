@@ -57,6 +57,7 @@ This section maps out the structure of the `config.yaml` file that drives `setup
 * **`configure_git_autocrlf`**: Sets `git config --global core.autocrlf true`.
 * **`enable_powershell_shortcuts`**: Adds aliases (`which`, `ll`) and PSReadLine prediction autocomplete to PowerShell profiles.
 * **`enable_terminal_duplicate_tab`**: Configures Windows Terminal and PowerShell prompt integration (OSC 9;9) so `Ctrl + Shift + D` opens duplicate tabs in the current working directory.
+* **`show_cwd_in_tab_title`**: Updates PowerShell profiles and Windows Terminal settings so tab titles dynamically display the current directory path with `~` shorthand (for example, `~/projects/sane-windows`).
 * **`require_ctrl_shift_copy_paste`**: Binds `Ctrl + Shift + C` and `Ctrl + Shift + V` for copy/paste in Terminal and PSReadLine, keeping `Ctrl + C` reserved for SIGINT.
 
 ### 6. Windows Update Control

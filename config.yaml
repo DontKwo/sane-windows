@@ -173,6 +173,9 @@ developer:
   # Binds Ctrl+Shift+D in Terminal and installs OSC 9;9 CWD tracker
   enable_terminal_duplicate_tab: true
 
+  # Displays current working directory (e.g. ~/projects/sane-windows) in Terminal & PowerShell tab titles
+  show_cwd_in_tab_title: true
+
   # Requires Ctrl+Shift+C to copy and Ctrl+Shift+V to paste in Terminal & PowerShell
   require_ctrl_shift_copy_paste: true
 
