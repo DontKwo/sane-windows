@@ -652,6 +652,15 @@ function Get-PowerShellProfilePaths {
             $paths += $profStr
         }
     }
+    $allHostsCandidates = @(
+        (Join-Path $docs "WindowsPowerShell\profile.ps1"),
+        (Join-Path $docs "PowerShell\profile.ps1")
+    )
+    foreach ($cand in $allHostsCandidates) {
+        if ((Test-Path -LiteralPath $cand) -and ($paths -notcontains $cand)) {
+            $paths += $cand
+        }
+    }
     return $paths
 }
 
@@ -743,6 +752,7 @@ if (-not $global:__SANE_WINDOWS_TAB_TITLE_LOADED) {
 
         try {
             $loc = $ExecutionContext.SessionState.Path.CurrentLocation
+            $esc = [char]27
             if ($loc.Provider.Name -eq 'FileSystem') {
                 $normPath = $loc.ProviderPath -replace '\\', '/'
                 $normHome = ($HOME -replace '\\', '/').TrimEnd('/')
@@ -754,9 +764,12 @@ if (-not $global:__SANE_WINDOWS_TAB_TITLE_LOADED) {
                         $normPath = '~' + $relPath
                     }
                 }
+                [Console]::Write("$esc]0;$normPath$esc\")
                 $Host.UI.RawUI.WindowTitle = $normPath
             } else {
-                $Host.UI.RawUI.WindowTitle = "$loc"
+                $locStr = "$loc"
+                [Console]::Write("$esc]0;$locStr$esc\")
+                $Host.UI.RawUI.WindowTitle = $locStr
             }
         } catch { }
 
@@ -843,7 +856,10 @@ if (-not $global:__SANE_WINDOWS_TAB_TITLE_LOADED) {
                 Invoke-Expression $snippet
                 $loc = $ExecutionContext.SessionState.Path.CurrentLocation
                 if ($loc.Provider.Name -eq 'FileSystem') {
-                    $Host.UI.RawUI.WindowTitle = Format-TabTitlePath -ProviderPath $loc.ProviderPath -HomePath $HOME
+                    $normTitle = Format-TabTitlePath -ProviderPath $loc.ProviderPath -HomePath $HOME
+                    $esc = [char]27
+                    [Console]::Write("$esc]0;$normTitle$esc\")
+                    $Host.UI.RawUI.WindowTitle = $normTitle
                 }
             } catch { }
         }

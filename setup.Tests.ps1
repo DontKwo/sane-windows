@@ -153,6 +153,8 @@ Describe "Format-TabTitlePath and Terminal Tab Title CWD" {
             Set-TerminalTabTitleCwd -Enable $true -ProfilePaths @($prof1, $prof2) -WtSettingsPaths @($wtJson)
 
             Get-TerminalTabTitleConfigured -ProfilePaths @($prof1, $prof2) -WtSettingsPaths @($wtJson) | Should -Be $true
+            $profContent = Get-Content -LiteralPath $prof1 -Raw
+            $profContent | Should -Match '\[Console\]::Write\("\$esc\]0;'
             $parsedWt = Get-Content -LiteralPath $wtJson -Raw | ConvertFrom-Json
             $parsedWt.profiles.defaults.suppressApplicationTitle | Should -Be $false
             $parsedWt.profiles.list[0].suppressApplicationTitle | Should -Be $false
