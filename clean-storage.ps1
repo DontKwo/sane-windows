@@ -35,7 +35,8 @@ param(
     [switch]$Interactive,
     [switch]$ExportJson,
     [string]$ExportPath,
-    [int]$MinAgeDays = 0
+    [int]$MinAgeDays = 0,
+    [string[]]$TargetIds = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -796,6 +797,24 @@ function Main {
 
     $driveBefore = Get-PSDrive -Name C -ErrorAction SilentlyContinue
     $targets = Collect-CleanupTargets -MinAgeDays $MinAgeDays
+
+    if ($TargetIds -and $TargetIds.Count -gt 0) {
+        $wantedIds = @{}
+        foreach ($rawTid in $TargetIds) {
+            foreach ($tid in ($rawTid -split ',')) {
+                if (-not [string]::IsNullOrWhiteSpace($tid)) {
+                    $wantedIds[$tid.Trim().ToLowerInvariant()] = $true
+                }
+            }
+        }
+        $filteredTargets = [System.Collections.ArrayList]@()
+        foreach ($itemTarget in $targets) {
+            if ($itemTarget.Id -and $wantedIds.ContainsKey($itemTarget.Id.ToLowerInvariant())) {
+                $null = $filteredTargets.Add($itemTarget)
+            }
+        }
+        $targets = $filteredTargets
+    }
 
     if ($ExportJson) {
         $totalBytes = 0L

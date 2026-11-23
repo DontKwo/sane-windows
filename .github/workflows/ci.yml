@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
   pull_request:
     branches:
       - main
@@ -43,7 +45,13 @@ jobs:
         run: |
           Install-Module -Name Pester -MinimumVersion 5.0 -Force -Scope CurrentUser
           $cfg = New-PesterConfiguration
-          $cfg.Run.Path = './setup.Tests.ps1'
+          $cfg.Run.Path = @(
+            './setup.Tests.ps1',
+            './clean-storage.Tests.ps1',
+            './check-tooling.Tests.ps1',
+            './ConvertFrom-SimpleYaml.Tests.ps1',
+            './Test-ConfigFile.Tests.ps1'
+          )
           $cfg.Run.Exit = $true
           Invoke-Pester -Configuration $cfg
 
@@ -88,6 +96,9 @@ jobs:
           ./scripts/build_desktop_exe.ps1
           .\build\SaneWindows-Windows.exe --self-test | Out-Host
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\build\SaneWindows-Windows.exe --screenshot build/ci_check.png | Out-Host
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item -Force build/ci_check.png -ErrorAction SilentlyContinue
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
@@ -97,7 +108,7 @@ jobs:
 
   release:
     needs: [lint-and-test, build-windows]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     permissions:
       contents: write
     runs-on: ubuntu-latest

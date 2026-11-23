@@ -13,21 +13,12 @@
       "screen_state_id": "tweaks"
     },
     {
-      "control_id": "header.theme_toggle",
+      "control_id": "tweaks.save_btn",
       "input_kind": "mouse",
       "trusted": true,
       "control_state": "enabled",
-      "test_node_id": "playwright::tweaks::header.theme_toggle",
+      "test_node_id": "playwright::tweaks::tweaks.save_btn",
       "sequence_number": 2,
-      "screen_state_id": "tweaks"
-    },
-    {
-      "control_id": "tweaks.snapshot_select",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "enabled",
-      "test_node_id": "playwright::tweaks::tweaks.snapshot_select",
-      "sequence_number": 3,
       "screen_state_id": "tweaks"
     },
     {
@@ -36,15 +27,24 @@
       "trusted": true,
       "control_state": "enabled",
       "test_node_id": "playwright::tweaks::tweaks.preview_btn",
+      "sequence_number": 3,
+      "screen_state_id": "tweaks"
+    },
+    {
+      "control_id": "header.theme_toggle",
+      "input_kind": "mouse",
+      "trusted": true,
+      "control_state": "enabled",
+      "test_node_id": "playwright::tweaks::header.theme_toggle",
       "sequence_number": 4,
       "screen_state_id": "tweaks"
     },
     {
-      "control_id": "tweaks.save_btn",
+      "control_id": "tweaks.snapshot_select",
       "input_kind": "mouse",
       "trusted": true,
       "control_state": "enabled",
-      "test_node_id": "playwright::tweaks::tweaks.save_btn",
+      "test_node_id": "playwright::tweaks::tweaks.snapshot_select",
       "sequence_number": 5,
       "screen_state_id": "tweaks"
     },
@@ -85,12 +85,21 @@
       "screen_state_id": "cleanup"
     },
     {
+      "control_id": "cleanup.min_age_slider",
+      "input_kind": "mouse",
+      "trusted": true,
+      "control_state": "enabled",
+      "test_node_id": "playwright::cleanup::cleanup.min_age_slider",
+      "sequence_number": 10,
+      "screen_state_id": "cleanup"
+    },
+    {
       "control_id": "cleanup.min_age_input",
       "input_kind": "keyboard",
       "trusted": true,
       "control_state": "enabled",
       "test_node_id": "playwright::cleanup::cleanup.min_age_input",
-      "sequence_number": 10,
+      "sequence_number": 11,
       "screen_state_id": "cleanup"
     },
     {
@@ -99,7 +108,16 @@
       "trusted": true,
       "control_state": "enabled",
       "test_node_id": "playwright::cleanup::cleanup.scan_btn",
-      "sequence_number": 11,
+      "sequence_number": 12,
+      "screen_state_id": "cleanup"
+    },
+    {
+      "control_id": "cleanup.select_all",
+      "input_kind": "mouse",
+      "trusted": true,
+      "control_state": "enabled",
+      "test_node_id": "playwright::cleanup::cleanup.select_all",
+      "sequence_number": 13,
       "screen_state_id": "cleanup"
     },
     {
@@ -108,7 +126,7 @@
       "trusted": true,
       "control_state": "enabled",
       "test_node_id": "playwright::cleanup::cleanup.clean_btn",
-      "sequence_number": 12,
+      "sequence_number": 14,
       "screen_state_id": "cleanup"
     },
     {
@@ -117,7 +135,7 @@
       "trusted": true,
       "control_state": "enabled",
       "test_node_id": "playwright::tooling::tabs.tooling",
-      "sequence_number": 13,
+      "sequence_number": 15,
       "screen_state_id": "tooling"
     },
     {
@@ -126,7 +144,7 @@
       "trusted": true,
       "control_state": "enabled",
       "test_node_id": "playwright::tooling::tooling.refresh_btn",
-      "sequence_number": 14,
+      "sequence_number": 16,
       "screen_state_id": "tooling"
     },
     {
@@ -135,7 +153,7 @@
       "trusted": true,
       "control_state": "enabled",
       "test_node_id": "playwright::tooling::tooling.install_btn",
-      "sequence_number": 15,
+      "sequence_number": 17,
       "screen_state_id": "tooling"
     },
     {
@@ -144,8 +162,17 @@
       "trusted": true,
       "control_state": "enabled",
       "test_node_id": "playwright::tooling::tooling.update_btn",
-      "sequence_number": 16,
+      "sequence_number": 18,
       "screen_state_id": "tooling"
+    },
+    {
+      "control_id": "log.clear_btn",
+      "input_kind": "mouse",
+      "trusted": true,
+      "control_state": "enabled",
+      "test_node_id": "playwright::log::log.clear_btn",
+      "sequence_number": 19,
+      "screen_state_id": "log"
     },
     {
       "control_id": "tabs.tweaks",
@@ -153,197 +180,17 @@
       "trusted": true,
       "control_state": "enabled",
       "test_node_id": "playwright::tweaks::tabs.tweaks",
-      "sequence_number": 17,
+      "sequence_number": 20,
       "screen_state_id": "tweaks"
     },
     {
-      "control_id": "log.clear_btn",
+      "control_id": "confirm.proceed_btn",
       "input_kind": "mouse",
       "trusted": true,
       "control_state": "enabled",
-      "test_node_id": "playwright::tweaks::log.clear_btn",
-      "sequence_number": 18,
-      "screen_state_id": "tweaks"
-    },
-    {
-      "control_id": "confirm.proceed_btn",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
       "test_node_id": "playwright::confirm::confirm.proceed_btn",
-      "sequence_number": 19,
-      "screen_state_id": "confirm"
-    },
-    {
-      "control_id": "tabs.tweaks",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
-      "test_node_id": "playwright::audit::tabs.tweaks",
-      "sequence_number": 20,
-      "screen_state_id": "audit"
-    },
-    {
-      "control_id": "tabs.cleanup",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
-      "test_node_id": "playwright::audit::tabs.cleanup",
       "sequence_number": 21,
-      "screen_state_id": "audit"
-    },
-    {
-      "control_id": "tabs.tooling",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
-      "test_node_id": "playwright::audit::tabs.tooling",
-      "sequence_number": 22,
-      "screen_state_id": "audit"
-    },
-    {
-      "control_id": "header.theme_toggle",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
-      "test_node_id": "playwright::audit::header.theme_toggle",
-      "sequence_number": 23,
-      "screen_state_id": "audit"
-    },
-    {
-      "control_id": "tweaks.search_input",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
-      "test_node_id": "playwright::audit::tweaks.search_input",
-      "sequence_number": 24,
-      "screen_state_id": "audit"
-    },
-    {
-      "control_id": "tweaks.save_btn",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
-      "test_node_id": "playwright::audit::tweaks.save_btn",
-      "sequence_number": 25,
-      "screen_state_id": "audit"
-    },
-    {
-      "control_id": "tweaks.preview_btn",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
-      "test_node_id": "playwright::audit::tweaks.preview_btn",
-      "sequence_number": 26,
-      "screen_state_id": "audit"
-    },
-    {
-      "control_id": "tweaks.apply_btn",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
-      "test_node_id": "playwright::audit::tweaks.apply_btn",
-      "sequence_number": 27,
-      "screen_state_id": "audit"
-    },
-    {
-      "control_id": "tweaks.snapshot_select",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
-      "test_node_id": "playwright::audit::tweaks.snapshot_select",
-      "sequence_number": 28,
-      "screen_state_id": "audit"
-    },
-    {
-      "control_id": "tweaks.revert_btn",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
-      "test_node_id": "playwright::audit::tweaks.revert_btn",
-      "sequence_number": 29,
-      "screen_state_id": "audit"
-    },
-    {
-      "control_id": "cleanup.min_age_input",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
-      "test_node_id": "playwright::audit::cleanup.min_age_input",
-      "sequence_number": 30,
-      "screen_state_id": "audit"
-    },
-    {
-      "control_id": "cleanup.scan_btn",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
-      "test_node_id": "playwright::audit::cleanup.scan_btn",
-      "sequence_number": 31,
-      "screen_state_id": "audit"
-    },
-    {
-      "control_id": "cleanup.clean_btn",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
-      "test_node_id": "playwright::audit::cleanup.clean_btn",
-      "sequence_number": 32,
-      "screen_state_id": "audit"
-    },
-    {
-      "control_id": "tooling.refresh_btn",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
-      "test_node_id": "playwright::audit::tooling.refresh_btn",
-      "sequence_number": 33,
-      "screen_state_id": "audit"
-    },
-    {
-      "control_id": "tooling.install_btn",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
-      "test_node_id": "playwright::audit::tooling.install_btn",
-      "sequence_number": 34,
-      "screen_state_id": "audit"
-    },
-    {
-      "control_id": "tooling.update_btn",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
-      "test_node_id": "playwright::audit::tooling.update_btn",
-      "sequence_number": 35,
-      "screen_state_id": "audit"
-    },
-    {
-      "control_id": "log.clear_btn",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
-      "test_node_id": "playwright::audit::log.clear_btn",
-      "sequence_number": 36,
-      "screen_state_id": "audit"
-    },
-    {
-      "control_id": "confirm.cancel_btn",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
-      "test_node_id": "playwright::audit::confirm.cancel_btn",
-      "sequence_number": 37,
-      "screen_state_id": "audit"
-    },
-    {
-      "control_id": "confirm.proceed_btn",
-      "input_kind": "mouse",
-      "trusted": true,
-      "control_state": "disabled",
-      "test_node_id": "playwright::audit::confirm.proceed_btn",
-      "sequence_number": 38,
-      "screen_state_id": "audit"
+      "screen_state_id": "confirm"
     }
   ]
 }

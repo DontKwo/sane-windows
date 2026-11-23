@@ -3,6 +3,8 @@
 
   const state = {
     sections: [],
+    cleanupItems: [],
+    toolingLoaded: false,
     pendingAction: null,
     filter: ""
   };
@@ -45,6 +47,14 @@
 
   function formatLabel(key) {
     return key.replace(/_/g, " ").replace(/\b\w/g, function (ch) { return ch.toUpperCase(); });
+  }
+
+  function formatBytes(bytes) {
+    const num = Number(bytes || 0);
+    if (num >= 1073741824) return (num / 1073741824).toFixed(2) + " GB";
+    if (num >= 1048576) return (num / 1048576).toFixed(2) + " MB";
+    if (num >= 1024) return (num / 1024).toFixed(2) + " KB";
+    return num + " B";
   }
 
   function renderTweaks() {
@@ -90,6 +100,49 @@
     });
   }
 
+  function renderTweaksDiffs(diffs) {
+    const card = document.getElementById("tweaksDiffCard");
+    const host = document.getElementById("tweaksDiffHost");
+    if (!card || !host) return;
+    host.textContent = "";
+    card.hidden = false;
+
+    if (!diffs || diffs.length === 0) {
+      const p = document.createElement("p");
+      p.className = "muted";
+      p.textContent = "All inspected settings match config.yaml with 0 pending changes.";
+      host.appendChild(p);
+      return;
+    }
+
+    const table = document.createElement("table");
+    table.innerHTML = "<thead><tr><th>Status</th><th>Section</th><th>Setting</th><th>Change / Detail</th></tr></thead><tbody></tbody>";
+    const tbody = table.querySelector("tbody");
+    diffs.slice(0, 60).forEach(function (row) {
+      const tr = document.createElement("tr");
+      const statusTd = document.createElement("td");
+      const badge = document.createElement("span");
+      const stLower = String(row.status || "Info").toLowerCase();
+      badge.className = "badge " + (stLower === "pending" ? "badge-warn" : (stLower === "skipped" ? "badge-muted" : "badge-ok"));
+      badge.textContent = row.status || "Info";
+      statusTd.appendChild(badge);
+
+      const secTd = document.createElement("td");
+      secTd.textContent = formatLabel(String(row.section || "system"));
+      const tgtTd = document.createElement("td");
+      tgtTd.textContent = formatLabel(String(row.target || ""));
+      const actTd = document.createElement("td");
+      actTd.textContent = String(row.action || "");
+
+      tr.appendChild(statusTd);
+      tr.appendChild(secTd);
+      tr.appendChild(tgtTd);
+      tr.appendChild(actTd);
+      tbody.appendChild(tr);
+    });
+    host.appendChild(table);
+  }
+
   function renderSnapshots(snapshots) {
     const select = document.getElementById("tweaks.snapshot_select");
     if (!select) return;
@@ -109,57 +162,132 @@
     });
   }
 
+  function updateCleanupSummary() {
+    const summaryEl = document.getElementById("cleanupSelectionSummary");
+    const selectAllEl = document.getElementById("cleanup.select_all");
+    if (!summaryEl) return;
+    const selected = state.cleanupItems.filter(function (it) { return it.selected; });
+    const totalBytes = selected.reduce(function (acc, it) { return acc + Number(it.sizeBytes || 0); }, 0);
+    summaryEl.textContent = selected.length + " of " + state.cleanupItems.length + " selected (" + formatBytes(totalBytes) + ")";
+    if (selectAllEl && state.cleanupItems.length > 0) {
+      selectAllEl.checked = selected.length === state.cleanupItems.length;
+    }
+  }
+
   function renderCleanupTable(items) {
+    state.cleanupItems = (items || []).map(function (item) {
+      return Object.assign({ selected: true }, item);
+    });
     const host = document.getElementById("cleanupTableHost");
     if (!host) return;
     host.textContent = "";
-    if (!items || items.length === 0) {
+    if (state.cleanupItems.length === 0) {
       const p = document.createElement("p");
       p.className = "muted";
       p.textContent = "No cleanable caches reported for the selected age filter.";
       host.appendChild(p);
+      updateCleanupSummary();
       return;
     }
     const table = document.createElement("table");
-    table.innerHTML = "<thead><tr><th>Target</th><th>Category</th><th>Reclaimable</th></tr></thead><tbody></tbody>";
+    table.innerHTML = "<thead><tr><th>Clean</th><th>Target</th><th>Category</th><th>Reclaimable</th></tr></thead><tbody></tbody>";
     const tbody = table.querySelector("tbody");
-    items.forEach(function (rowItem) {
+    state.cleanupItems.forEach(function (rowItem) {
       const tr = document.createElement("tr");
+      const checkTd = document.createElement("td");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.className = "cleanup-row-check";
+      box.checked = Boolean(rowItem.selected);
+      box.setAttribute("aria-label", "Select " + (rowItem.name || rowItem.id));
+      box.addEventListener("change", function () {
+        rowItem.selected = box.checked;
+        updateCleanupSummary();
+      });
+      checkTd.appendChild(box);
+
       const nameTd = document.createElement("td");
       nameTd.textContent = rowItem.name || "Target";
       const catTd = document.createElement("td");
       catTd.textContent = rowItem.category || "Cache";
       const sizeTd = document.createElement("td");
       sizeTd.textContent = rowItem.sizeLabel || "0 B";
+
+      tr.appendChild(checkTd);
       tr.appendChild(nameTd);
       tr.appendChild(catTd);
       tr.appendChild(sizeTd);
       tbody.appendChild(tr);
     });
     host.appendChild(table);
+    updateCleanupSummary();
+  }
+
+  async function runSingleToolAction(mode, toolName) {
+    setStatus((mode === "install" ? "Installing " : "Updating ") + toolName + "...");
+    const res = await apiPost("/api/tooling/action", { mode: mode, tool: toolName });
+    renderToolingTable(res.tools || []);
+    setStatus(res.ok ? (toolName + " action finished.") : (toolName + " action returned warnings."));
+    appendLog(res.output || "");
   }
 
   function renderToolingTable(rows) {
     const host = document.getElementById("toolingTableHost");
     if (!host) return;
     host.textContent = "";
+    if (!rows || rows.length === 0) {
+      const p = document.createElement("p");
+      p.className = "muted";
+      p.textContent = "Click Refresh Diagnostics to inspect installed developer CLIs.";
+      host.appendChild(p);
+      return;
+    }
     const table = document.createElement("table");
-    table.innerHTML = "<thead><tr><th>Tool</th><th>Status</th><th>Version</th></tr></thead><tbody></tbody>";
+    table.innerHTML = "<thead><tr><th>Tool</th><th>Status</th><th>Version</th><th>Action</th></tr></thead><tbody></tbody>";
     const tbody = table.querySelector("tbody");
-    (rows || []).forEach(function (item) {
+    rows.forEach(function (item) {
       const tr = document.createElement("tr");
       const nameTd = document.createElement("td");
       nameTd.textContent = item.tool || "";
       const stTd = document.createElement("td");
-      stTd.textContent = item.status || "";
+      const badge = document.createElement("span");
+      const isInstalled = String(item.status || "").toLowerCase() === "installed";
+      badge.className = "badge " + (isInstalled ? "badge-ok" : "badge-warn");
+      badge.textContent = item.status || "Unknown";
+      stTd.appendChild(badge);
+
       const verTd = document.createElement("td");
       verTd.textContent = item.version || "";
+
+      const actTd = document.createElement("td");
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = isInstalled ? "btn-secondary" : "btn-primary";
+      const mode = isInstalled ? "update" : "install";
+      btn.textContent = isInstalled ? "Update" : "Install";
+      btn.addEventListener("click", function () {
+        openConfirm((isInstalled ? "Update " : "Install ") + item.tool + " via system package manager?", function () {
+          return runSingleToolAction(mode, item.tool);
+        });
+      });
+      actTd.appendChild(btn);
+
       tr.appendChild(nameTd);
       tr.appendChild(stTd);
       tr.appendChild(verTd);
+      tr.appendChild(actTd);
       tbody.appendChild(tr);
     });
     host.appendChild(table);
+  }
+
+  async function refreshToolingDiagnostics() {
+    setStatus("Inspecting installed developer CLIs...");
+    const res = await apiPost("/api/tooling/status", {});
+    state.toolingLoaded = true;
+    renderToolingTable(res.tools || []);
+    setStatus("Tooling check complete.");
+    appendLog(res.output || "");
   }
 
   function switchTab(activeId) {
@@ -175,6 +303,12 @@
       if (btn) btn.classList.toggle("active", isSelected);
       if (panel) panel.hidden = !isSelected;
     });
+    if (activeId === "tabs.tooling" && !state.toolingLoaded) {
+      refreshToolingDiagnostics().catch(function (err) {
+        setStatus("Unable to inspect developer CLIs.");
+        appendLog(String(err));
+      });
+    }
   }
 
   function openConfirm(message, fn) {
@@ -236,6 +370,7 @@
       setStatus("Running dry-run preview (-WhatIf)...");
       await saveConfig();
       const res = await apiPost("/api/setup/preview", {});
+      renderTweaksDiffs(res.diffs || []);
       setStatus("Preview complete.");
       appendLog(res.output || "");
     });
@@ -266,31 +401,55 @@
       });
     });
 
+    const minAgeInput = document.getElementById("minAgeInput");
+    const minAgeSlider = document.getElementById("minAgeSlider");
+    if (minAgeInput && minAgeSlider) {
+      minAgeSlider.addEventListener("input", function () {
+        minAgeInput.value = minAgeSlider.value;
+      });
+      minAgeInput.addEventListener("input", function () {
+        const clamped = Math.max(0, Math.min(365, Number(minAgeInput.value || 0)));
+        minAgeSlider.value = String(clamped);
+      });
+    }
+
+    document.querySelector('[data-testid="cleanup.select_all"]').addEventListener("change", function (ev) {
+      const checked = Boolean(ev.target.checked);
+      state.cleanupItems.forEach(function (item) { item.selected = checked; });
+      document.querySelectorAll(".cleanup-row-check").forEach(function (el) { el.checked = checked; });
+      updateCleanupSummary();
+    });
+
     document.querySelector('[data-testid="cleanup.scan_btn"]').addEventListener("click", async function () {
       const days = Number(document.getElementById("minAgeInput").value || 0);
       setStatus("Scanning Windows caches (dry run)...");
       const res = await apiPost("/api/cleanup/scan", { minAgeDays: days });
       renderCleanupTable(res.items || []);
-      setStatus("Cache scan complete.");
+      setStatus("Cache scan complete (" + (res.totalSize || "0 B") + ").");
       appendLog(res.output || "");
     });
 
     document.querySelector('[data-testid="cleanup.clean_btn"]').addEventListener("click", function () {
       const days = Number(document.getElementById("minAgeInput").value || 0);
-      openConfirm("Permanently remove detected temporary and cache files older than " + days + " day(s)?", async function () {
+      const selectedIds = state.cleanupItems.filter(function (it) { return it.selected; }).map(function (it) { return it.id; });
+      if (state.cleanupItems.length > 0 && selectedIds.length === 0) {
+        setStatus("Select at least one cleanup category first.");
+        return;
+      }
+      const targetDesc = selectedIds.length > 0 ? (selectedIds.length + " selected target(s)") : "detected temporary and cache files";
+      openConfirm("Permanently remove " + targetDesc + " older than " + days + " day(s)?", async function () {
         setStatus("Cleaning selected caches...");
-        const res = await apiPost("/api/cleanup/run", { minAgeDays: days });
+        const res = await apiPost("/api/cleanup/run", { minAgeDays: days, targetIds: selectedIds });
         setStatus(res.ok ? "Cleanup finished." : "Cleanup completed with warnings.");
         appendLog(res.output || "");
       });
     });
 
-    document.querySelector('[data-testid="tooling.refresh_btn"]').addEventListener("click", async function () {
-      setStatus("Inspecting installed developer CLIs...");
-      const res = await apiPost("/api/tooling/status", {});
-      renderToolingTable(res.tools || []);
-      setStatus("Tooling check complete.");
-      appendLog(res.output || "");
+    document.querySelector('[data-testid="tooling.refresh_btn"]').addEventListener("click", function () {
+      refreshToolingDiagnostics().catch(function (err) {
+        setStatus("Tooling inspection failed.");
+        appendLog(String(err));
+      });
     });
 
     document.querySelector('[data-testid="tooling.install_btn"]').addEventListener("click", function () {

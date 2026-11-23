@@ -54,6 +54,11 @@
           <button type="button" class="btn-danger" data-testid="tweaks.revert_btn">Revert Snapshot</button>
         </div>
 
+        <div id="tweaksDiffCard" class="card" hidden>
+          <h2>Dry-Run Diff Table (-WhatIf)</h2>
+          <div id="tweaksDiffHost" class="table-wrap"></div>
+        </div>
+
         <div id="tweaksGrid" class="sections-grid"></div>
       </section>
 
@@ -61,6 +66,16 @@
         <div class="toolbar">
           <div class="field-inline">
             <label for="minAgeInput">Preserve recent files (days):</label>
+            <input
+              id="minAgeSlider"
+              class="range-input"
+              type="range"
+              min="0"
+              max="365"
+              value="0"
+              aria-label="Minimum Age Days Slider"
+              data-testid="cleanup.min_age_slider"
+            />
             <input
               id="minAgeInput"
               class="number-input"
@@ -73,12 +88,21 @@
           </div>
           <div class="toolbar-actions">
             <button type="button" class="btn-secondary" data-testid="cleanup.scan_btn">Scan Caches</button>
-            <button type="button" class="btn-danger" data-testid="cleanup.clean_btn">Clean Caches</button>
+            <button type="button" class="btn-danger" data-testid="cleanup.clean_btn">Clean Selected</button>
           </div>
         </div>
 
         <div id="cleanupSummary" class="card">
-          <h2>Storage Audit</h2>
+          <div class="card-header">
+            <h2>Storage Audit</h2>
+            <div class="field-inline">
+              <label class="select-all-label">
+                <input id="cleanup.select_all" type="checkbox" checked data-testid="cleanup.select_all" />
+                <span>Select All</span>
+              </label>
+              <span id="cleanupSelectionSummary" class="muted">Not scanned yet</span>
+            </div>
+          </div>
           <p class="muted">Click Scan Caches to measure temporary files, package caches, and browser caches without deleting anything.</p>
           <div id="cleanupTableHost" class="table-wrap"></div>
         </div>

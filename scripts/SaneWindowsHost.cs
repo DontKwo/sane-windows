@@ -19,6 +19,10 @@ namespace SaneWindowsHost
     {
         private static readonly Dictionary<string, byte[]> Assets = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
         private static readonly object FileLock = new object();
+        private static readonly HashSet<string> AllowedTools = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "git", "uv", "python", "pnpm", "npm", "cargo", "docker", "wsl"
+        };
         private static string _workspaceDir;
 
         [STAThread]
@@ -27,6 +31,7 @@ namespace SaneWindowsHost
             bool selfTest = false;
             bool headless = false;
             int requestedPort = 0;
+            string screenshotTarget = null;
             _workspaceDir = ResolveWorkspaceDir();
 
             for (int i = 0; i < args.Length; i++)
@@ -48,6 +53,15 @@ namespace SaneWindowsHost
                             i++;
                         }
                     }
+                }
+                else if (arg.StartsWith("--screenshot=", StringComparison.OrdinalIgnoreCase))
+                {
+                    screenshotTarget = arg.Substring("--screenshot=".Length).Trim();
+                }
+                else if (arg == "--screenshot" && i + 1 < args.Length)
+                {
+                    screenshotTarget = (args[i + 1] ?? string.Empty).Trim();
+                    i++;
                 }
                 else if (arg.StartsWith("--workspace=", StringComparison.OrdinalIgnoreCase))
                 {
@@ -92,6 +106,14 @@ namespace SaneWindowsHost
                 return 0;
             }
 
+            if (!string.IsNullOrWhiteSpace(screenshotTarget))
+            {
+                int exitCode = CaptureHeadlessScreenshot(baseUrl, screenshotTarget);
+                cts.Cancel();
+                try { listener.Stop(); } catch { }
+                return exitCode;
+            }
+
             if (headless)
             {
                 Console.WriteLine("READY " + baseUrl);
@@ -129,6 +151,57 @@ namespace SaneWindowsHost
                 }
             }
             return Environment.CurrentDirectory;
+        }
+
+        private static int CaptureHeadlessScreenshot(string baseUrl, string targetPath)
+        {
+            string outPng = targetPath.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+                ? Path.GetFullPath(targetPath)
+                : Path.GetFullPath(Path.Combine(targetPath, "01_main.png"));
+            string parentDir = Path.GetDirectoryName(outPng);
+            if (!string.IsNullOrEmpty(parentDir))
+            {
+                Directory.CreateDirectory(parentDir);
+            }
+            string browserExe = FindAppShellBrowser();
+            if (string.IsNullOrEmpty(browserExe))
+            {
+                Console.Error.WriteLine("No Chromium/Edge executable found for --screenshot.");
+                return 1;
+            }
+
+            string profileDir = Path.Combine(Path.GetTempPath(), "sane_win_shot_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(profileDir);
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = browserExe,
+                    Arguments = "--headless=new --disable-gpu --no-sandbox --hide-scrollbars --window-size=1440,900 --virtual-time-budget=2500 --user-data-dir=\"" + profileDir + "\" --screenshot=\"" + outPng + "\" " + baseUrl,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using (Process proc = Process.Start(psi))
+                {
+                    if (proc == null || !proc.WaitForExit(45000))
+                    {
+                        Console.Error.WriteLine("Headless screenshot browser timed out.");
+                        return 1;
+                    }
+                }
+                if (!File.Exists(outPng) || new FileInfo(outPng).Length < 1000)
+                {
+                    Console.Error.WriteLine("Screenshot output missing or empty: " + outPng);
+                    return 1;
+                }
+                Console.WriteLine("SCREENSHOT_OK " + outPng);
+                Console.Out.Flush();
+                return 0;
+            }
+            finally
+            {
+                try { Directory.Delete(profileDir, true); } catch { }
+            }
         }
 
         private static void LoadEmbeddedAssets()
@@ -294,7 +367,7 @@ namespace SaneWindowsHost
 
         private static string HandleApi(string method, string reqPath, string bodyText)
         {
-            var ser = new JavaScriptSerializer();
+            var ser = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
             if (reqPath == "/api/health")
             {
                 return ser.Serialize(new Dictionary<string, object> { { "ok", true }, { "workspace", _workspaceDir } });
@@ -305,7 +378,7 @@ namespace SaneWindowsHost
             }
             if (reqPath == "/api/config" && method == "POST")
             {
-                var req = ser.Deserialize<Dictionary<string, object>>(bodyText) ?? new Dictionary<string, object>();
+                var req = DeserializeDict(ser, bodyText);
                 SaveConfigYaml(req);
                 return ser.Serialize(new Dictionary<string, object> { { "ok", true }, { "output", "Updated config.yaml" } });
             }
@@ -315,7 +388,10 @@ namespace SaneWindowsHost
             }
             if (reqPath == "/api/setup/preview")
             {
-                return ser.Serialize(RunPowerShell("setup.ps1", "-WhatIf"));
+                var res = RunPowerShell("setup.ps1", "-WhatIf -VerboseOutput");
+                string outStr = res.ContainsKey("output") ? Convert.ToString(res["output"]) : string.Empty;
+                res["diffs"] = ParseSetupDiffs(outStr);
+                return ser.Serialize(res);
             }
             if (reqPath == "/api/setup/apply")
             {
@@ -323,7 +399,7 @@ namespace SaneWindowsHost
             }
             if (reqPath == "/api/setup/revert")
             {
-                var req = ser.Deserialize<Dictionary<string, object>>(bodyText) ?? new Dictionary<string, object>();
+                var req = DeserializeDict(ser, bodyText);
                 string snap = req.ContainsKey("snapshot") && req["snapshot"] != null ? req["snapshot"].ToString() : string.Empty;
                 string safeName = Path.GetFileName(snap);
                 string snapPath = Path.Combine(_workspaceDir, "snapshots", safeName);
@@ -331,28 +407,251 @@ namespace SaneWindowsHost
             }
             if (reqPath == "/api/cleanup/scan")
             {
-                var req = ser.Deserialize<Dictionary<string, object>>(bodyText) ?? new Dictionary<string, object>();
+                var req = DeserializeDict(ser, bodyText);
                 int days = req.ContainsKey("minAgeDays") ? Convert.ToInt32(req["minAgeDays"]) : 0;
-                return ser.Serialize(RunPowerShell("clean-storage.ps1", "-WhatIf -MinAgeDays " + days));
+                return ser.Serialize(RunCleanupScan(ser, days));
             }
             if (reqPath == "/api/cleanup/run")
             {
-                var req = ser.Deserialize<Dictionary<string, object>>(bodyText) ?? new Dictionary<string, object>();
+                var req = DeserializeDict(ser, bodyText);
                 int days = req.ContainsKey("minAgeDays") ? Convert.ToInt32(req["minAgeDays"]) : 0;
-                return ser.Serialize(RunPowerShell("clean-storage.ps1", "-Yes -MinAgeDays " + days));
+                var validIds = new List<string>();
+                if (req.ContainsKey("targetIds") && req["targetIds"] != null)
+                {
+                    var rawArr = req["targetIds"] as System.Collections.IEnumerable;
+                    if (rawArr != null)
+                    {
+                        foreach (object obj in rawArr)
+                        {
+                            string idStr = obj == null ? string.Empty : obj.ToString().Trim();
+                            if (Regex.IsMatch(idStr, @"^[a-z0-9-]+$", RegexOptions.IgnoreCase))
+                            {
+                                validIds.Add(idStr);
+                            }
+                        }
+                    }
+                }
+                string psArgs = "-Yes -MinAgeDays " + Math.Max(0, days);
+                if (validIds.Count > 0)
+                {
+                    psArgs += " -TargetIds \"" + string.Join(",", validIds) + "\"";
+                }
+                return ser.Serialize(RunPowerShell("clean-storage.ps1", psArgs));
             }
             if (reqPath == "/api/tooling/status")
             {
-                return ser.Serialize(RunPowerShell("check-tooling.ps1", ""));
+                var res = RunPowerShell("check-tooling.ps1", "");
+                string outStr = res.ContainsKey("output") ? Convert.ToString(res["output"]) : string.Empty;
+                res["tools"] = ParseToolingTable(outStr);
+                return ser.Serialize(res);
             }
             if (reqPath == "/api/tooling/action")
             {
-                var req = ser.Deserialize<Dictionary<string, object>>(bodyText) ?? new Dictionary<string, object>();
+                var req = DeserializeDict(ser, bodyText);
                 string mode = req.ContainsKey("mode") && req["mode"] != null ? req["mode"].ToString() : "status";
                 string flag = mode == "install" ? "-Install" : (mode == "update" ? "-Update" : "");
-                return ser.Serialize(RunPowerShell("check-tooling.ps1", flag));
+                string toolName = req.ContainsKey("tool") && req["tool"] != null ? req["tool"].ToString().Trim() : string.Empty;
+                if (!string.IsNullOrEmpty(toolName) && AllowedTools.Contains(toolName))
+                {
+                    flag = string.IsNullOrEmpty(flag) ? ("-Tool " + toolName) : (flag + " -Tool " + toolName);
+                }
+                var res = RunPowerShell("check-tooling.ps1", flag);
+                string outStr = res.ContainsKey("output") ? Convert.ToString(res["output"]) : string.Empty;
+                res["tools"] = ParseToolingTable(outStr);
+                return ser.Serialize(res);
             }
             return ser.Serialize(new Dictionary<string, object> { { "ok", false }, { "error", "Unknown endpoint" } });
+        }
+
+        private static Dictionary<string, object> DeserializeDict(JavaScriptSerializer ser, string bodyText)
+        {
+            if (string.IsNullOrWhiteSpace(bodyText))
+            {
+                return new Dictionary<string, object>();
+            }
+            return ser.Deserialize<Dictionary<string, object>>(bodyText) ?? new Dictionary<string, object>();
+        }
+
+        private static Dictionary<string, object> RunCleanupScan(JavaScriptSerializer ser, int minAgeDays)
+        {
+            string tempJson = Path.Combine(Path.GetTempPath(), "sane_win_scan_" + Guid.NewGuid().ToString("N") + ".json");
+            try
+            {
+                string args = "-ExportJson -MinAgeDays " + Math.Max(0, minAgeDays) + " -ExportPath \"" + tempJson + "\"";
+                var psRes = RunPowerShell("clean-storage.ps1", args);
+                string logOutput = psRes.ContainsKey("output") ? Convert.ToString(psRes["output"]) : string.Empty;
+                if (!File.Exists(tempJson))
+                {
+                    return new Dictionary<string, object>
+                    {
+                        { "ok", false },
+                        { "items", new List<object>() },
+                        { "totalSize", "0 B" },
+                        { "output", string.IsNullOrWhiteSpace(logOutput) ? "Storage scan failed to produce JSON report." : logOutput }
+                    };
+                }
+                string rawJson = File.ReadAllText(tempJson, Encoding.UTF8);
+                var parsed = ser.Deserialize<Dictionary<string, object>>(rawJson) ?? new Dictionary<string, object>();
+                var items = new List<Dictionary<string, object>>();
+                var rawTargets = parsed.ContainsKey("Targets") ? parsed["Targets"] as System.Collections.IEnumerable : null;
+                if (rawTargets != null)
+                {
+                    foreach (object itemObj in rawTargets)
+                    {
+                        var dict = itemObj as Dictionary<string, object>;
+                        if (dict == null) continue;
+                        string id = dict.ContainsKey("Id") && dict["Id"] != null ? dict["Id"].ToString() : string.Empty;
+                        string name = dict.ContainsKey("Name") && dict["Name"] != null ? dict["Name"].ToString() : id;
+                        string displayPath = dict.ContainsKey("DisplayPath") && dict["DisplayPath"] != null ? dict["DisplayPath"].ToString() : string.Empty;
+                        long sizeBytes = dict.ContainsKey("SizeBytes") && dict["SizeBytes"] != null ? Convert.ToInt64(dict["SizeBytes"]) : 0L;
+                        items.Add(new Dictionary<string, object>
+                        {
+                            { "id", id },
+                            { "name", name },
+                            { "category", ClassifyCleanupCategory(id, name) },
+                            { "path", displayPath },
+                            { "sizeBytes", sizeBytes },
+                            { "sizeLabel", sizeBytes > 0 ? FormatByteSize(sizeBytes) : "Dynamic" },
+                            { "selected", true }
+                        });
+                    }
+                }
+                string totalSize = parsed.ContainsKey("FormattedTotalSize") && parsed["FormattedTotalSize"] != null
+                    ? parsed["FormattedTotalSize"].ToString()
+                    : "0 B";
+                string summary = string.Format("Found {0} cleanable target(s), total measured: {1}.", items.Count, totalSize);
+                if (!string.IsNullOrWhiteSpace(logOutput))
+                {
+                    summary = summary + "\n" + logOutput;
+                }
+                return new Dictionary<string, object>
+                {
+                    { "ok", true },
+                    { "items", items },
+                    { "totalSize", totalSize },
+                    { "output", summary }
+                };
+            }
+            finally
+            {
+                try { if (File.Exists(tempJson)) File.Delete(tempJson); } catch { }
+            }
+        }
+
+        private static string ClassifyCleanupCategory(string id, string name)
+        {
+            string key = (id + " " + name).ToLowerInvariant();
+            if (key.Contains("chrome") || key.Contains("edge") || key.Contains("firefox")) return "Browser";
+            if (key.Contains("pnpm") || key.Contains("yarn") || key.Contains("uv") || key.Contains("pip") || key.Contains("npm") || key.Contains("cargo") || key.Contains("nuget")) return "Package Cache";
+            if (key.Contains("wsl") || key.Contains("docker") || key.Contains("psreadline") || key.Contains("vscode")) return "Developer";
+            return "Windows System";
+        }
+
+        private static string FormatByteSize(long bytes)
+        {
+            if (bytes >= 1073741824L) return string.Format("{0:N2} GB", bytes / 1073741824.0);
+            if (bytes >= 1048576L) return string.Format("{0:N2} MB", bytes / 1048576.0);
+            if (bytes >= 1024L) return string.Format("{0:N2} KB", bytes / 1024.0);
+            return string.Format("{0} B", bytes);
+        }
+
+        private static List<Dictionary<string, object>> ParseSetupDiffs(string outputText)
+        {
+            var diffs = new List<Dictionary<string, object>>();
+            if (string.IsNullOrEmpty(outputText)) return diffs;
+
+            bool inPlannedTable = false;
+            foreach (string raw in outputText.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None))
+            {
+                string trimmed = raw.Trim();
+                if (string.IsNullOrEmpty(trimmed)) continue;
+
+                if (trimmed.StartsWith("Category") && trimmed.Contains("Description") && trimmed.Contains("New Value"))
+                {
+                    inPlannedTable = true;
+                    continue;
+                }
+                if (inPlannedTable && trimmed.StartsWith("---"))
+                {
+                    continue;
+                }
+                if (inPlannedTable && trimmed.StartsWith("==="))
+                {
+                    inPlannedTable = false;
+                    continue;
+                }
+                if (inPlannedTable)
+                {
+                    string[] cols = Regex.Split(trimmed, @"\s{2,}");
+                    if (cols.Length >= 4)
+                    {
+                        diffs.Add(new Dictionary<string, object>
+                        {
+                            { "status", "Pending" },
+                            { "section", cols[0] },
+                            { "target", cols[1] },
+                            { "action", cols[2] + " -> " + cols[3] }
+                        });
+                        continue;
+                    }
+                }
+
+                var skipMatch = Regex.Match(trimmed, @"^\[SKIPPED\]\s+([^:]+):\s*(.+)$");
+                if (skipMatch.Success)
+                {
+                    string fullKey = skipMatch.Groups[1].Value.Trim();
+                    string[] keyParts = fullKey.Split(new[] { '.' }, 2);
+                    diffs.Add(new Dictionary<string, object>
+                    {
+                        { "status", "Skipped" },
+                        { "section", keyParts.Length > 0 ? keyParts[0] : "system" },
+                        { "target", keyParts.Length > 1 ? keyParts[1] : fullKey },
+                        { "action", skipMatch.Groups[2].Value.Trim() }
+                    });
+                    continue;
+                }
+
+                var okMatch = Regex.Match(trimmed, @"^\[UNCHANGED\]\s+([^:]+):\s*(.+)$");
+                if (okMatch.Success)
+                {
+                    string fullKey = okMatch.Groups[1].Value.Trim();
+                    string[] keyParts = fullKey.Split(new[] { '.' }, 2);
+                    diffs.Add(new Dictionary<string, object>
+                    {
+                        { "status", "Unchanged" },
+                        { "section", keyParts.Length > 0 ? keyParts[0] : "system" },
+                        { "target", keyParts.Length > 1 ? keyParts[1] : fullKey },
+                        { "action", okMatch.Groups[2].Value.Trim() }
+                    });
+                }
+            }
+            return diffs;
+        }
+
+        private static List<Dictionary<string, object>> ParseToolingTable(string outputText)
+        {
+            var rows = new List<Dictionary<string, object>>();
+            if (string.IsNullOrEmpty(outputText)) return rows;
+
+            foreach (string raw in outputText.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None))
+            {
+                string cleaned = raw.Replace("\0", string.Empty).Trim();
+                var m = Regex.Match(cleaned, @"^(git|uv|python|pnpm|npm|cargo|docker|wsl)\s+(Installed|Missing)\s+(.+)$", RegexOptions.IgnoreCase);
+                if (!m.Success) continue;
+
+                string ver = m.Groups[3].Value.Trim();
+                if (Regex.IsMatch(ver, @"^(?:[A-Za-z0-9\.\:]\s+){3,}"))
+                {
+                    ver = Regex.Replace(ver, @"(?<=\S)\s(?=\S)", string.Empty);
+                }
+                rows.Add(new Dictionary<string, object>
+                {
+                    { "tool", m.Groups[1].Value.ToLowerInvariant() },
+                    { "status", m.Groups[2].Value },
+                    { "version", ver }
+                });
+            }
+            return rows;
         }
 
         private static List<Dictionary<string, object>> ParseConfigYaml()
@@ -431,7 +730,7 @@ namespace SaneWindowsHost
                         lines[i] = m.Groups[1].Value + m.Groups[2].Value + ": " + updates[m.Groups[2].Value] + m.Groups[4].Value;
                     }
                 }
-                File.WriteAllLines(cfgPath, lines, Encoding.UTF8);
+                File.WriteAllLines(cfgPath, lines, new UTF8Encoding(false));
             }
         }
 
