@@ -126,19 +126,26 @@ Describe "Format-TabTitlePath and Terminal Tab Title CWD" {
         }
     }
 
-    It "Formats paths under HOME with ~ and forward slashes" {
-        Format-TabTitlePath -ProviderPath "C:\Users\Josh\projects\sane-windows" -HomePath "C:\Users\Josh" | Should -Be "~/projects/sane-windows"
+    It "Formats short paths under HOME with ~ and forward slashes without truncation" {
+        Format-TabTitlePath -ProviderPath "C:\Users\Josh\projects" -HomePath "C:\Users\Josh" | Should -Be "~/projects"
         Format-TabTitlePath -ProviderPath "C:\Users\Josh" -HomePath "C:\Users\Josh" | Should -Be "~"
         Format-TabTitlePath -ProviderPath "C:\Users\Josh\" -HomePath "C:\Users\Josh" | Should -Be "~"
     }
 
+    It "Truncates long paths from the left to keep the current folder visible" {
+        Format-TabTitlePath -ProviderPath "C:\Users\Josh\projects\sane-windows" -HomePath "C:\Users\Josh" | Should -Be "...s/sane-windows"
+        Format-TabTitlePath -ProviderPath "C:\Users\Joshua\projects" -HomePath "C:\Users\Josh" | Should -Be "...oshua/projects"
+        Format-TabTitlePath -ProviderPath "C:\Users\Josh\projects\sane-windows" -HomePath "C:\Users\Josh" -MaxLength 21 | Should -Be "...jects/sane-windows"
+        Format-TabTitlePath -ProviderPath "C:\Users\Josh\projects\sane-windows" -HomePath "C:\Users\Josh" -MaxLength 0 | Should -Be "~/projects/sane-windows"
+    }
+
     It "Does not false-match sibling user directories or non-HOME drives" {
-        Format-TabTitlePath -ProviderPath "C:\Users\Joshua\projects" -HomePath "C:\Users\Josh" | Should -Be "C:/Users/Joshua/projects"
+        Format-TabTitlePath -ProviderPath "C:\Users\Joshua\projects" -HomePath "C:\Users\Josh" -MaxLength 0 | Should -Be "C:/Users/Joshua/projects"
         Format-TabTitlePath -ProviderPath "D:\work\repo" -HomePath "C:\Users\Josh" | Should -Be "D:/work/repo"
         Format-TabTitlePath -ProviderPath "" -HomePath "C:\Users\Josh" | Should -Be ""
     }
 
-    It "Installs, detects, updates, and removes CWD tab title hook across profiles and Terminal settings" {
+    It "Installs, detects, upgrades, and removes CWD tab title hook across profiles and Terminal settings" {
         $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("sane_win_test_" + [guid]::NewGuid().ToString("N"))
         $null = New-Item -ItemType Directory -Path $tempDir -Force
         try {
@@ -155,9 +162,17 @@ Describe "Format-TabTitlePath and Terminal Tab Title CWD" {
             Get-TerminalTabTitleConfigured -ProfilePaths @($prof1, $prof2) -WtSettingsPaths @($wtJson) | Should -Be $true
             $profContent = Get-Content -LiteralPath $prof1 -Raw
             $profContent | Should -Match '\[Console\]::Write\("\$esc\]0;'
+            $profContent | Should -Match '\$maxLen = 17'
             $parsedWt = Get-Content -LiteralPath $wtJson -Raw | ConvertFrom-Json
             $parsedWt.profiles.defaults.suppressApplicationTitle | Should -Be $false
             $parsedWt.profiles.list[0].suppressApplicationTitle | Should -Be $false
+
+            $legacyBlock = "# >>> Sane Windows Tab Title CWD >>>`r`nfunction global:prompt { 'old' }`r`n# <<< Sane Windows Tab Title CWD <<<"
+            [System.IO.File]::WriteAllText($prof1, $legacyBlock, [System.Text.Encoding]::UTF8)
+            Get-TerminalTabTitleConfigured -ProfilePaths @($prof1, $prof2) -WtSettingsPaths @($wtJson) | Should -Be $false
+
+            Set-TerminalTabTitleCwd -Enable $true -ProfilePaths @($prof1, $prof2) -WtSettingsPaths @($wtJson)
+            Get-TerminalTabTitleConfigured -ProfilePaths @($prof1, $prof2) -WtSettingsPaths @($wtJson) | Should -Be $true
 
             Set-TerminalTabTitleCwd -Enable $false -ProfilePaths @($prof1, $prof2) -WtSettingsPaths @($wtJson)
             Get-TerminalTabTitleConfigured -ProfilePaths @($prof1, $prof2) -WtSettingsPaths @($wtJson) | Should -Be $false

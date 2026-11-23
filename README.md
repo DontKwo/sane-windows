@@ -1,154 +1,76 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Sane Windows Logo" width="240" />
+</p>
+
 # Sane Windows
 
-Modular system configuration and disk maintenance for Windows 10 and 11.
+**Snapshot-safe Windows 10 and 11 privacy tweaks, cache cleanup, and developer tool diagnostics.**
+
+Sane Windows gives you a visual control panel for privacy policies, File Explorer defaults, taskbar clutter, temporary cache cleanup, and developer CLI checks without hand-editing the Windows Registry or remembering PowerShell flags. Every tweak session saves an automatic rollback snapshot first.
 
 ---
 
-## Overview
+## Download
 
-SYSTEM MODIFICATION DISCLAIMER: sane-windows scripts execute low-level Windows configuration changes, registry edits, service adjustments, and environment modifications. Run at your own risk. The software is provided AS IS, without warranty of any kind. The author is not liable for system instability, data loss, operating system recovery requirements, or policy violations.
+| Platform | Download | How to Install |
+| :--- | :--- | :--- |
+| **Windows** | [SaneWindows-Windows.exe](https://github.com/DontKwo/sane-windows/releases/latest/download/SaneWindows-Windows.exe) | [Windows Install Steps](docs/INSTALLATION.md#windows) |
 
-Sane Windows provides two snapshot-safe management tools:
-* **`setup.ps1`**: Configures privacy, Explorer, performance, UI, developer ergonomics, and Windows Update settings defined in `config.yaml`. Takes an automatic snapshot before making modifications to allow immediate rollback.
-* **`clean-storage.ps1`**: Reclaims disk space by clearing temporary files, package caches (`uv`, `pip`, `npm`, `pnpm`, `yarn`), compiler toolchains, application caches, crash dumps, and container runtimes with explicit confirmation prompts.
-
----
-
-## Quick Start
-
-### 1. System Configuration
-
-Edit preferences in `config.yaml`, then run:
-```powershell
-.\setup.ps1
-```
-
-* **Preview diffs (dry run):**
-  ```powershell
-  .\setup.ps1 -WhatIf
-  ```
-* **Run unattended (skip confirmation prompts):**
-  ```powershell
-  .\setup.ps1 -Yes
-  ```
-* **Request Administrator privileges (self-elevation via UAC):**
-  ```powershell
-  .\setup.ps1 -Elevate
-  ```
-* **Export current machine settings to YAML:**
-  ```powershell
-  .\setup.ps1 -ExportConfig [-ExportPath path\to\config.yaml]
-  ```
-* **Restore previous settings (rollback):**
-  ```powershell
-  .\setup.ps1 -Revert [-SnapshotPath path\to\snapshot.json]
-  ```
-* **List available snapshots:**
-  ```powershell
-  .\setup.ps1 -ListSnapshots
-  ```
-* **Compare two snapshots:**
-  ```powershell
-  # Requires dot-sourcing or loading the function from setup.ps1
-  . .\setup.ps1
-  Compare-SystemSnapshots -SnapshotA snapshots\old.json -SnapshotB snapshots\new.json
-  ```
-* **Additional flags:**
-  * `-ConfigPath <path>`: Load a custom YAML configuration.
-  * `-NoExplorerRestart`: Skip restarting File Explorer after Explorer/Taskbar tweaks.
-  * `-VerboseOutput`: Display unchanged settings alongside planned modifications.
-
-When running interactively, `setup.ps1` presents a planned changes table and prompts:
-* `[Y] Yes`: Create a snapshot and apply all changes.
-* `[N] No`: Abort without applying changes.
-* `[I] Individual`: Prompt for each change individually.
+Browse release notes on [All Releases](https://github.com/DontKwo/sane-windows/releases/latest).
 
 ---
 
-### 2. Disk & Cache Cleanup
+## Screenshots
 
-Scan and clean system caches and build artifacts:
-```powershell
-.\clean-storage.ps1
-```
-
-* **Preview cleanable items without deleting (dry run):**
-  ```powershell
-  .\clean-storage.ps1 -WhatIf
-  ```
-* **Clean all detected items automatically:**
-  ```powershell
-  .\clean-storage.ps1 -Yes
-  ```
-* **Confirm each cleanup item individually:**
-  ```powershell
-  .\clean-storage.ps1 -Interactive
-  ```
-* **Audit disk space and output JSON report:**
-  ```powershell
-  .\clean-storage.ps1 -ExportJson
-  ```
-* **Audit disk space and save JSON report to file:**
-  ```powershell
-  .\clean-storage.ps1 -ExportJson -ExportPath path\to\audit.json
-* **Preserve recent files (e.g., modified within the last 7 days):**
-  ```powershell
-  .\clean-storage.ps1 -MinAgeDays 7
-  ```
-
-Cleaned targets include:
-* User temporary files (`%TEMP%`)
-* Command history: PowerShell `PSReadLine` history
-* Browser caches: Chrome, Edge, Firefox
-* Package caches: `uv`, `pip`, `npm`, `pnpm`, `yarn`, Cargo (`cargo`), Gradle, Go, NuGet, `vcpkg`
-* Toolchains and models: Rust nightly (`rustup`), Visual Studio Installer, MSBuild, `rembg` ONNX models
-* Application caches and superseded builds: VS Code staged VSIX packages, VS Code stale workspace storage (`workspaceStorage`), Raspberry Pi Imager OS cache, superseded Claude Desktop and MathWorks ServiceHost installations, Claude project workflows
-* Windows Update download cache: Downloaded installation payloads (requires admin)
-* Diagnostic data: Windows error crash dumps and minidumps (`.dmp`), Autodesk CER reports
-* Container and VM runtimes: Docker prune (`docker system prune -a --volumes -f`), WSL2 VM shutdown (`wsl --shutdown`)
+<p align="center">
+  <img src="assets/screenshots/01_main.png" alt="Sane Windows System Tweaks Desktop Interface" width="760" />
+</p>
 
 ---
 
-### 3. Tooling Diagnostics & Auto Install / Update
+## How to Use
 
-Diagnose installed developer CLIs and versions:
-```powershell
-.\check-tooling.ps1
-```
+1. **Download `SaneWindows-Windows.exe`** from the table above and place it alongside your `config.yaml` profile folder.
+2. **Review System Tweaks**: Toggle Windows 10 and 11 settings on or off and click **Preview Diffs (-WhatIf)** to inspect changes without editing your system.
+3. **Snapshot & Apply**: Click **Snapshot & Apply** to save a local JSON backup before writing approved tweaks, or select a snapshot later and click **Revert Snapshot**.
+4. **Disk Cleanup & Tooling**: Switch tabs to scan reclaimable caches safely or check installed developer tools (`git`, `uv`, `python`, `pnpm`, `npm`, `cargo`, `docker`, `wsl`).
 
-* **Automatically install missing developer tools:**
-  ```powershell
-  .\check-tooling.ps1 -Install
-  ```
-* **Update installed developer tools:**
-  ```powershell
-  .\check-tooling.ps1 -Update
-  ```
-* **Install or update specific tools only:**
-  ```powershell
-  .\check-tooling.ps1 -Install -Tool uv, git
-  .\check-tooling.ps1 -Update -Tool pnpm
-  ```
+---
 
-Supported CLIs include: `git`, `uv`, `python`, `pnpm`, `npm`, `cargo`, `docker`, and `wsl`.
+## Key Features
+
+- **Automatic Rollback Snapshots**: Captures Registry, Git, and terminal settings before every apply so changes stay reversible.
+- **Dry-Run Previews**: Shows exact pending changes (`-WhatIf`) and cache sizes before touching a single file or Registry key.
+- **Confirmation Prompts**: Guards system modifications, cache deletions, and tool installations behind explicit confirmation dialogs.
+- **Open Source**: Transparent PowerShell scripts and desktop shell released under the [MIT License](LICENSE).
+
+---
+
+## Safety & Disclaimers
+
+- **System Modification Warning**: Sane Windows modifies Windows Registry keys, services, File Explorer behavior, and system caches. Always run a dry-run preview first and keep rollback snapshots.
+- **Official `main` Releases Only**: Only download executables from [DontKwo/sane-windows](https://github.com/DontKwo/sane-windows/releases/latest) (`main` branch). Never download forked builds unless you are certain they contain no malware; only the `main` release stream is maintained by the author, and I make no promises.
+- **Windows SmartScreen Warnings**: Because `SaneWindows-Windows.exe` is published independently without a commercial code-signing certificate, Windows SmartScreen will likely flag it as unrecognized or unsafe. Bypassing those prompts is strictly at your own discretion; see [Windows Installation Guide](docs/INSTALLATION.md).
+- **AS-IS Disclaimer**: Provided "AS IS" under the [MIT License](LICENSE) with zero warranty or liability. Use entirely at your own risk.
 
 ---
 
 ## Documentation
 
-For full details, please refer to the documentation:
+### User Documentation
+- [User Guide](docs/USER_GUIDE.md)
+- [Windows Installation Guide](docs/INSTALLATION.md)
+- [Customization Reference](docs/CUSTOMIZATION.md)
+- [Frequently Asked Questions](docs/FAQ.md)
 
-*   **[User Guide](docs/USER_GUIDE.md)**: Step-by-step instructions on running the scripts safely.
-*   **[Customization Reference](docs/CUSTOMIZATION.md)**: Complete map of `config.yaml` and guide for custom presets.
-*   **[FAQ](docs/FAQ.md)**: Common questions about Windows updates, anti-cheat, rollbacks, and troubleshooting.
+### Developer Documentation
+- [Developer Guide](docs/DEVELOPMENT.md)
+- [Developer uv Installation](docs/UV_INSTALLATION.md)
 
----
+### AI, Mathematical Proof & Technical Documentation
+- [AI Agent Rules](AGENTS.md)
 
-## Safety & Compatibility Guards
-
-* **OS Platform Guard**: Halts immediately on non-Windows platforms without modifying system state.
-* **Version Isolation**:
-  * Windows 11 features (`classic_context_menu`, `hide_taskbar_copilot_button`, `hide_taskbar_widgets`) skip automatically on Windows 10.
-  * Windows 11 23H2+ features (`enable_taskbar_end_task`, Build $\ge 22631$) skip on earlier builds.
-* **Idempotent Checks**: Reads current values before modification. Settings matching desired state are marked `[UNCHANGED]` and skipped.
-* **Automatic Snapshots & Rollback**: Saves timestamped JSON snapshots to `snapshots\` before changes occur. Run `.\setup.ps1 -Revert` to restore registry values, PowerShell profiles, and git settings.
+### Legal & Security Policies
+- [Security Policy](SECURITY.md)
+- [Third-Party Notices](THIRD_PARTY_NOTICES.md)
+- [MIT License](LICENSE)

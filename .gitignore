@@ -2,6 +2,9 @@
 snapshots/*.json
 !snapshots/.gitkeep
 
+# Build outputs
+build/
+
 # Exported configs
 config.exported.yaml
 
@@ -15,6 +18,10 @@ patch.*
 
 # Logs
 *.log
+
+# Linter cache & reports
+.lint_cache.json
+lint_report*.txt
 
 # Sensitive patterns
 .env

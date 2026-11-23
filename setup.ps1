@@ -668,7 +668,8 @@ function Format-TabTitlePath {
     [OutputType([string])]
     param(
         [string]$ProviderPath,
-        [string]$HomePath = $HOME
+        [string]$HomePath = $HOME,
+        [int]$MaxLength = 17
     )
     if ([string]::IsNullOrEmpty($ProviderPath)) { return "" }
     $normPath = $ProviderPath -replace '\\', '/'
@@ -677,12 +678,15 @@ function Format-TabTitlePath {
         if ($normHome.Length -gt 0 -and $normPath.StartsWith($normHome, [System.StringComparison]::OrdinalIgnoreCase)) {
             $relPath = $normPath.Substring($normHome.Length)
             if ($relPath.Length -eq 0 -or $relPath -eq '/') {
-                return "~"
-            }
-            if ($relPath.StartsWith('/')) {
-                return "~" + $relPath
+                $normPath = "~"
+            } elseif ($relPath.StartsWith('/')) {
+                $normPath = "~" + $relPath
             }
         }
+    }
+    if ($MaxLength -gt 3 -and $normPath.Length -gt $MaxLength) {
+        $keepLen = $MaxLength - 3
+        return "..." + $normPath.Substring($normPath.Length - $keepLen)
     }
     return $normPath
 }
@@ -704,7 +708,7 @@ function Get-TerminalTabTitleConfigured {
         } catch {
             return $false
         }
-        if ([string]::IsNullOrEmpty($raw) -or ($raw -notmatch [regex]::Escape($markerStart))) {
+        if ([string]::IsNullOrEmpty($raw) -or ($raw -notmatch [regex]::Escape($markerStart)) -or ($raw -notmatch '\$maxLen\s*=\s*17')) {
             return $false
         }
     }
@@ -742,39 +746,46 @@ if (-not $global:__SANE_WINDOWS_TAB_TITLE_LOADED) {
     if ((Test-Path Function:\prompt) -and (-not (Test-Path Function:\__sane_windows_tab_title_original_prompt))) {
         Copy-Item Function:\prompt Function:\__sane_windows_tab_title_original_prompt
     }
+}
 
-    function global:prompt {
-        $promptResult = if (Test-Path Function:\__sane_windows_tab_title_original_prompt) {
-            __sane_windows_tab_title_original_prompt
-        } else {
-            "PS $($ExecutionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) "
-        }
-
-        try {
-            $loc = $ExecutionContext.SessionState.Path.CurrentLocation
-            $esc = [char]27
-            if ($loc.Provider.Name -eq 'FileSystem') {
-                $normPath = $loc.ProviderPath -replace '\\', '/'
-                $normHome = ($HOME -replace '\\', '/').TrimEnd('/')
-                if ($normHome.Length -gt 0 -and $normPath.StartsWith($normHome, [System.StringComparison]::OrdinalIgnoreCase)) {
-                    $relPath = $normPath.Substring($normHome.Length)
-                    if ($relPath.Length -eq 0 -or $relPath -eq '/') {
-                        $normPath = '~'
-                    } elseif ($relPath.StartsWith('/')) {
-                        $normPath = '~' + $relPath
-                    }
-                }
-                [Console]::Write("$esc]0;$normPath$esc\")
-                $Host.UI.RawUI.WindowTitle = $normPath
-            } else {
-                $locStr = "$loc"
-                [Console]::Write("$esc]0;$locStr$esc\")
-                $Host.UI.RawUI.WindowTitle = $locStr
-            }
-        } catch { }
-
-        return $promptResult
+function global:prompt {
+    $promptResult = if (Test-Path Function:\__sane_windows_tab_title_original_prompt) {
+        __sane_windows_tab_title_original_prompt
+    } else {
+        "PS $($ExecutionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) "
     }
+
+    try {
+        $loc = $ExecutionContext.SessionState.Path.CurrentLocation
+        $esc = [char]27
+        $maxLen = 17
+        if ($loc.Provider.Name -eq 'FileSystem') {
+            $normPath = $loc.ProviderPath -replace '\\', '/'
+            $normHome = ($HOME -replace '\\', '/').TrimEnd('/')
+            if ($normHome.Length -gt 0 -and $normPath.StartsWith($normHome, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $relPath = $normPath.Substring($normHome.Length)
+                if ($relPath.Length -eq 0 -or $relPath -eq '/') {
+                    $normPath = '~'
+                } elseif ($relPath.StartsWith('/')) {
+                    $normPath = '~' + $relPath
+                }
+            }
+            if ($normPath.Length -gt $maxLen) {
+                $normPath = '...' + $normPath.Substring($normPath.Length - ($maxLen - 3))
+            }
+            [Console]::Write("$esc]0;$normPath$esc\")
+            $Host.UI.RawUI.WindowTitle = $normPath
+        } else {
+            $locStr = "$loc"
+            if ($locStr.Length -gt $maxLen) {
+                $locStr = '...' + $locStr.Substring($locStr.Length - ($maxLen - 3))
+            }
+            [Console]::Write("$esc]0;$locStr$esc\")
+            $Host.UI.RawUI.WindowTitle = $locStr
+        }
+    } catch { }
+
+    return $promptResult
 }
 # <<< Sane Windows Tab Title CWD <<<
 '@
@@ -1174,7 +1185,7 @@ developer:
   # Binds Ctrl+Shift+D in Terminal and installs OSC 9;9 CWD tracker
   enable_terminal_duplicate_tab: $(To-YBool $termDup)
 
-  # Displays current working directory (e.g. ~/projects/sane-windows) in Terminal & PowerShell tab titles
+  # Displays current working directory (e.g. ...s/sane-windows) in Terminal & PowerShell tab titles
   show_cwd_in_tab_title: $(To-YBool $isTabTitleCwd)
 
   # Requires Ctrl+Shift+C to copy and Ctrl+Shift+V to paste in Terminal & PowerShell
@@ -2481,7 +2492,7 @@ if ($config['developer']['enable_terminal_duplicate_tab']) {
     }
 }
 
-# Terminal & PowerShell Tab Title CWD (e.g. ~/projects/sane-windows)
+# Terminal & PowerShell Tab Title CWD (e.g. ...s/sane-windows)
 if ($null -ne $config['developer']['show_cwd_in_tab_title']) {
     $isTabTitleConfigured = Get-TerminalTabTitleConfigured
     if ($config['developer']['show_cwd_in_tab_title']) {

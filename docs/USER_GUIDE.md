@@ -1,69 +1,30 @@
 # Sane Windows - User Guide
 
-## Introduction
+Sane Windows helps you configure Windows 10 and Windows 11 privacy, File Explorer, taskbar layout, developer settings, cache cleanup, and CLI tooling from one graphical desktop app (`SaneWindows-Windows.exe`) or from PowerShell.
 
-Sane Windows provides two primary scripts designed to improve your Windows experience safely:
-1.  **`setup.ps1`**: Reads `config.yaml` to configure privacy, Explorer, UI debloat, and more.
-2.  **`clean-storage.ps1`**: Reclaims disk space by clearing various caches.
+## Desktop Application Workflow
 
-## Running the Setup Script
+1. Launch `SaneWindows-Windows.exe` (see [Windows Installation Guide](INSTALLATION.md) if Microsoft Defender SmartScreen prompts).
+2. **System Tweaks tab**: Review switches loaded from `config.yaml`, click **Preview Changes** for a safe dry-run table, then click **Snapshot & Apply** to save an automatic backup and apply your selections.
+3. **Rollback**: Select any timestamped snapshot in **System Tweaks** and click **Revert Snapshot** to restore previous registry and profile settings.
+4. **Disk Cleanup tab**: Click **Scan Caches** to calculate reclaimable space, set an optional **Min Age (Days)** threshold, and click **Clean Selected** after reviewing the confirmation prompt.
+5. **Tooling Check tab**: Audit installed developer tools (`git`, `uv`, `python`, `pnpm`, `npm`, `cargo`, `docker`, `wsl`) and trigger single-click installs or updates.
 
-To apply configurations, edit `config.yaml` as required, then run:
+## PowerShell CLI Equivalent
 
-```powershell
-.\setup.ps1
-```
+Advanced users who run scripts directly from the repository root can use:
 
-By default, the script will show you a table of planned changes and prompt for confirmation.
+- **Dry-run preview**: `.\setup.ps1 -WhatIf`
+- **Snapshot and apply**: `.\setup.ps1` (or `.\setup.ps1 -Yes`)
+- **Rollback**: `.\setup.ps1 -Revert`
+- **Storage audit / clean**: `.\clean-storage.ps1 -WhatIf` / `.\clean-storage.ps1`
+- **Tooling diagnostics**: `.\check-tooling.ps1`
 
-### Execution Modes
+## Related Documentation
 
-*   **Dry Run**: To preview the changes without modifying the system, run `.\setup.ps1 -WhatIf`.
-*   **Unattended Mode**: To skip all confirmation prompts, run `.\setup.ps1 -Yes`.
-*   **Interactive Mode**: To be prompted for each individual change, select `I` when prompted during standard execution.
-
-### Administrator Privileges
-
-Some changes (like telemetry tasks or long path support) require Administrator privileges. If you are not running as Admin, you can self-elevate by using:
-```powershell
-.\setup.ps1 -Elevate
-```
-
-## Running the Storage Cleaner
-
-To scan and clean system caches and build artifacts:
-
-```powershell
-.\clean-storage.ps1
-```
-
-### Options
-
-*   **Dry Run**: See what would be deleted: `.\clean-storage.ps1 -WhatIf`
-*   **Unattended**: Clean all without prompting: `.\clean-storage.ps1 -Yes`
-*   **Interactive**: Confirm each cleanup target: `.\clean-storage.ps1 -Interactive`
-*   **Preserve Recent**: Keep files modified within the last N days (e.g., 7 days): `.\clean-storage.ps1 -MinAgeDays 7`
-
-## Rollbacks and Snapshots
-
-`setup.ps1` takes an automatic snapshot of your settings before it makes any modifications.
-
-### Viewing Snapshots
-
-To list available snapshots:
-```powershell
-.\setup.ps1 -ListSnapshots
-```
-
-### Reverting Changes
-
-To revert your system to a previous state:
-```powershell
-.\setup.ps1 -Revert
-```
-*You can also specify a specific snapshot using `-SnapshotPath path\to\snapshot.json`.*
-
-## Important Considerations
-
-*   **Disclaimer**: This software makes low-level Windows configuration changes. Run at your own risk.
-*   **Explorer Restarts**: Some changes to the UI or Taskbar require File Explorer to restart to take effect. The script will safely handle this.
+- [Project Overview](../README.md)
+- [Windows Installation Guide](INSTALLATION.md)
+- [Customization Reference](CUSTOMIZATION.md)
+- [Frequently Asked Questions](FAQ.md)
+- [Developer Guide](DEVELOPMENT.md)
+- [Security Policy](../SECURITY.md)

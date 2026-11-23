@@ -1,0 +1,11 @@
+[linter]
+profile = "strict"
+level = "strict"
+diff_only = true
+ui_evidence = "tests/ui_evidence.json"
+
+[project]
+single_os = "windows"
+
+[ui]
+frameworks = ["web"]

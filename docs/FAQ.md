@@ -1,24 +1,31 @@
-# Sane Windows - FAQ
+# Sane Windows - Frequently Asked Questions
 
-## Common Questions
+## General Safety & Recovery
+
+### How do I undo tweaks applied by Sane Windows?
+`setup.ps1` automatically writes a snapshot file under `snapshots\` before changing any setting. Open the **System Tweaks** tab and click **Revert Snapshot**, or run `.\setup.ps1 -Revert` from PowerShell.
 
 ### Does this break Windows Updates?
-No. The `windows_update` section of `config.yaml` provides controls like `no_auto_restart_logged_on` and `exclude_drivers`. However, it does not stop Windows from receiving security patches or general updates.
+No. The `windows_update` options (`no_auto_restart_logged_on` and `exclude_drivers`) prevent sudden reboots while signed in and optional driver pushes, while leaving standard security updates enabled.
 
 ### Will this trigger anti-cheat software in games?
-The configurations applied by Sane Windows are standard OS features, registry changes, and privacy toggles. They do not inject into game processes, bypass kernel protections, or behave like cheats. Anti-cheat software should remain unaffected.
+Sane Windows adjusts standard OS registry settings, Explorer preferences, and telemetry policies without kernel hooks or process injection.
 
-### How do I reverse the tweaks?
-`setup.ps1` creates an automatic snapshot before making any changes. To restore your system settings, simply run:
-```powershell
-.\setup.ps1 -Revert
-```
-This will restore your registry keys, PowerShell profiles, Git settings, and context menus to their pre-execution state.
+## Troubleshooting
 
-### What if I don't want a specific tweak?
-You can disable any tweak by setting its corresponding value to `false` in your `config.yaml` file. The scripts are entirely modular.
+### Why did Windows SmartScreen warn when opening the `.exe`?
+Independently published executables without commercial EV certificates trigger Microsoft Defender SmartScreen on first launch. Verify the download came from [DontKwo/sane-windows Releases](https://github.com/DontKwo/sane-windows/releases/latest) and follow [Windows Installation Guide](INSTALLATION.md).
 
-### My changes didn't apply. What should I do?
-1. Check the console output to ensure the change was actually applied (and not marked `[UNCHANGED]` or `[SKIPPED]`).
-2. Some changes require Administrator privileges. Run `.\setup.ps1 -Elevate`.
-3. Certain UI tweaks require a File Explorer restart or a system reboot to take full effect.
+### Why didn't a specific tweak apply?
+1. Confirm the toggle is `true` in `config.yaml` and saved before applying.
+2. Some HKLM policies and Win32 long-path keys require Administrator privileges. Run the app or `.\setup.ps1 -Elevate` as Administrator.
+3. Explorer and taskbar visual tweaks require File Explorer restart or sign-out/reboot.
+
+## Related Documentation
+
+- [Project Overview](../README.md)
+- [User Guide](USER_GUIDE.md)
+- [Windows Installation Guide](INSTALLATION.md)
+- [Customization Reference](CUSTOMIZATION.md)
+- [Developer Guide](DEVELOPMENT.md)
+- [Security Policy](../SECURITY.md)

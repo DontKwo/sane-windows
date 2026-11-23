@@ -1,28 +1,119 @@
-name: CI
+name: CI & Release
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
   pull_request:
-    branches: [ "main" ]
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  test:
-    name: Run Quality Checks
+  lint-and-test:
     runs-on: windows-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout Sane Windows
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Clone ai-dev-tools
+        shell: bash
+        run: git clone --depth 1 https://github.com/DontKwo/ai-dev-tools.git "${{ runner.temp }}/_aitools"
+
+      - name: Run Strict Linter and Link Check
+        shell: bash
+        run: |
+          if ! uv run --no-project python "${{ runner.temp }}/_aitools/scripts/claudemd_linter.py" . --level strict --full --no-cache; then
+            cat "${{ runner.temp }}/_aitools/scripts"/lint_report_*.txt || true
+            exit 1
+          fi
+          uv run --no-project python "${{ runner.temp }}/_aitools/scripts/link_checker.py" .
+
+      - name: Install and Run Pester Suite
+        shell: pwsh
+        run: |
+          Install-Module -Name Pester -MinimumVersion 5.0 -Force -Scope CurrentUser
+          $cfg = New-PesterConfiguration
+          $cfg.Run.Path = './setup.Tests.ps1'
+          $cfg.Run.Exit = $true
+          Invoke-Pester -Configuration $cfg
+
+      - name: Verify PowerShell Dry Runs
+        shell: pwsh
+        run: |
+          ./setup.ps1 -WhatIf
+          ./clean-storage.ps1 -WhatIf
+
+      - name: Compute Next SemVer Release Version
+        id: ver
+        shell: python
+        run: |
+          import os, re, subprocess
+          subprocess.run(["git", "fetch", "--tags", "--force"], check=False)
+          raw_tags = subprocess.check_output(["git", "tag", "--list", "v*"], text=True).splitlines()
+          semvers = []
+          for t in raw_tags:
+              m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)$", t.strip())
+              if m:
+                  semvers.append(tuple(int(x) for x in m.groups()))
+          base = max(semvers) if semvers else (0, 1, 0)
+          next_ver = (base[0], base[1], base[2] + 1) if f"v{base[0]}.{base[1]}.{base[2]}" in raw_tags else base
+          ver_str = f"{next_ver[0]}.{next_ver[1]}.{next_ver[2]}"
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"version={ver_str}\ntag=v{ver_str}\n")
+          print(f"Resolved version v{ver_str}")
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+
+  build-windows:
+    needs: lint-and-test
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Run Pester test suites
+      - name: Build and Self-Test SaneWindows-Windows.exe
         shell: pwsh
-        run: Invoke-Pester -Path ./*.Tests.ps1
+        run: |
+          ./scripts/build_desktop_exe.ps1
+          .\build\SaneWindows-Windows.exe --self-test | Out-Host
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Verify setup.ps1 dry run compilation
-        shell: pwsh
-        run: ./setup.ps1 -WhatIf
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-package
+          path: build/SaneWindows-Windows.exe
 
-      - name: Verify clean-storage.ps1 storage audit
-        shell: pwsh
-        run: ./clean-storage.ps1 -WhatIf
+  release:
+    needs: [lint-and-test, build-windows]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Release Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.lint-and-test.outputs.tag }}
+          name: SaneWindows ${{ needs.lint-and-test.outputs.tag }}
+          prerelease: false
+          make_latest: "true"
+          generate_release_notes: true
+          files: |
+            artifacts/windows-package/SaneWindows-Windows.exe
