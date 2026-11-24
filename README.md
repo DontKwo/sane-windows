@@ -46,15 +46,6 @@ Browse release notes on [All Releases](https://github.com/DontKwo/sane-windows/r
 
 ---
 
-## Safety & Disclaimers
-
-- **System Modification Warning**: Sane Windows modifies Windows Registry keys, services, File Explorer behavior, and system caches. Always run a dry-run preview first and keep rollback snapshots.
-- **Official `main` Releases Only**: Only download executables from [DontKwo/sane-windows](https://github.com/DontKwo/sane-windows/releases/latest) (`main` branch). Never download forked builds unless you are certain they contain no malware; only the `main` release stream is maintained by the author, and I make no promises.
-- **Windows SmartScreen Warnings**: Because `SaneWindows-Windows.exe` is published independently without a commercial code-signing certificate, Windows SmartScreen will likely flag it as unrecognized or unsafe. Bypassing those prompts is strictly at your own discretion; see [Windows Installation Guide](docs/INSTALLATION.md).
-- **AS-IS Disclaimer**: Provided "AS IS" under the [MIT License](LICENSE) with zero warranty or liability. Use entirely at your own risk.
-
----
-
 ## Documentation
 
 ### User Documentation
@@ -67,10 +58,19 @@ Browse release notes on [All Releases](https://github.com/DontKwo/sane-windows/r
 - [Developer Guide](docs/DEVELOPMENT.md)
 - [Developer uv Installation](docs/UV_INSTALLATION.md)
 
-### AI, Mathematical Proof & Technical Documentation
+### AI & Technical Documentation
 - [AI Agent Rules](AGENTS.md)
 
 ### Legal & Security Policies
 - [Security Policy](SECURITY.md)
 - [Third-Party Notices](THIRD_PARTY_NOTICES.md)
 - [MIT License](LICENSE)
+
+---
+
+## Safety & Disclaimers
+
+- **System Modification Warning**: Sane Windows modifies Windows Registry keys, services, File Explorer behavior, and system caches. Always run a dry-run preview first and keep rollback snapshots.
+- **Official `main` Releases Only**: Only download executables from [DontKwo/sane-windows](https://github.com/DontKwo/sane-windows/releases/latest) (`main` branch). Never download forked builds unless you are certain they contain no malware; only the `main` release stream is maintained by the author, and I make no promises.
+- **Windows SmartScreen Warnings**: Because `SaneWindows-Windows.exe` is published independently without a commercial code-signing certificate, Windows SmartScreen will likely flag it as unrecognized or unsafe. Bypassing those prompts is strictly at your own discretion; see [Windows Installation Guide](docs/INSTALLATION.md).
+- **AS-IS Disclaimer**: Provided "AS IS" under the [MIT License](LICENSE) with zero warranty or liability. Use entirely at your own risk.
